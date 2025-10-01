@@ -64,7 +64,7 @@ const styles = {
   },
   modal: {
     width: '100%', maxWidth: 520,
-    background: '#fff',
+    background: '#942525ff',
     borderRadius: 12,
     padding: 20,
     boxShadow: '0 12px 40px rgba(0,0,0,0.25)'

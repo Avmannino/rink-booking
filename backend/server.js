@@ -1,4 +1,24 @@
-import 'dotenv/config';
+// ---- Load .env from backend/.env OR fallback to ../.env (project root) ----
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const backendEnv = path.join(__dirname, '.env');
+const rootEnv = path.join(__dirname, '../.env');
+
+if (fs.existsSync(backendEnv)) {
+  dotenv.config({ path: backendEnv });
+  console.log('[ENV] Loaded backend/.env');
+} else if (fs.existsSync(rootEnv)) {
+  dotenv.config({ path: rootEnv });
+  console.log('[ENV] Loaded ../.env (project root)');
+} else {
+  console.warn('[ENV] No .env found at', backendEnv, 'or', rootEnv);
+}
+
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
@@ -25,8 +45,7 @@ const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
   : null;
 
-// ---- Startup diagnostics (one-time) ----
-const mask = (s, keep = 6) => (s ? `${s.slice(0, keep)}…(${s.length})` : '');
+// ---- Startup diagnostics ----
 console.log('[BOOT]',
   JSON.stringify({
     port: PORT,
@@ -38,38 +57,36 @@ console.log('[BOOT]',
   }, null, 2)
 );
 
+// Simple request logger
+app.use((req, _res, next) => {
+  console.log(`[HTTP] ${req.method} ${req.url}`);
+  next();
+});
+
 // Allow raw body only for webhook route
 app.use((req, res, next) => {
   if (req.originalUrl === '/api/stripe/webhook') return next();
   bodyParser.json()(req, res, next);
 });
 
-// Allow both localhost and 127.0.0.1 during dev
+// Allow both localhost and 127.0.0.1 in dev
 const allowedOrigins = new Set([
-  CLIENT_ORIGIN,                     // from .env, e.g. http://localhost:5173
+  CLIENT_ORIGIN,
   'http://localhost:5173',
   'http://127.0.0.1:5173'
 ]);
-
 app.use(cors({
   origin(origin, cb) {
-    // allow non-browser requests (curl, server-to-server) which send no Origin
     if (!origin) return cb(null, true);
-
-    // allow any of the dev origins above
-    if ([...allowedOrigins].some(o => o && origin.startsWith(o))) {
-      return cb(null, true);
-    }
-
-    // In dev you can loosen further by uncommenting the next line:
-    // if (process.env.NODE_ENV !== 'production') return cb(null, true);
-
+    if ([...allowedOrigins].some(o => o && origin.startsWith(o))) return cb(null, true);
     return cb(new Error(`Not allowed by CORS: ${origin}`));
   }
 }));
 
-
-// Health check
+// Root and health
+app.get('/', (_req, res) => {
+  res.type('text/plain').send('Rink Booking API is running. Try /health or /api/slots');
+});
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
@@ -87,7 +104,22 @@ function slotId(start, end) {
     .slice(0, 24);
 }
 
-// GET /api/slots — parse ICS, filter out booked/held
+// Expand a VEVENT into 1-hour sub-intervals
+function expandIntoHours(startDate, endDate) {
+  const s = new Date(startDate);
+  const e = new Date(endDate);
+  const hours = [];
+  let cur = new Date(s);
+  while (cur < e) {
+    const nxt = new Date(cur.getTime() + 60 * 60 * 1000);
+    if (nxt > e) break; // only full 60-min blocks
+    hours.push({ start: new Date(cur), end: new Date(nxt) });
+    cur = nxt;
+  }
+  return hours;
+}
+
+// GET /api/slots — parse ICS, expand to 1h blocks, filter by holds/bookings
 app.get('/api/slots', async (_req, res) => {
   const t0 = Date.now();
   try {
@@ -102,46 +134,53 @@ app.get('/api/slots', async (_req, res) => {
       events = await ical.async.fromURL(ICS_URL);
     } catch (e) {
       console.error('[SLOTS] ical.fromURL failed:', e?.message || e);
-      return res.status(502).json({ error: 'Failed to fetch ICS. Check the URL (try Secret iCal address).' });
+      return res.status(502).json({ error: 'Failed to fetch ICS. Use the Secret iCal address.' });
     }
 
     const now = new Date();
-    const all = Object.values(events).filter(e => e?.type === 'VEVENT');
-    console.log(`[SLOTS] ICS VEVENTs total: ${all.length}`);
+    const vevents = Object.values(events).filter(e => e?.type === 'VEVENT');
+    console.log(`[SLOTS] ICS VEVENTs total: ${vevents.length}`);
 
-    const rawSlots = all
-      .filter(e => e.start && e.end && e.end > now)
-      .map(e => {
-        const start = new Date(e.start);
-        const end = new Date(e.end);
-        return { id: slotId(start, end), title: e.summary || 'Available Ice', start, end };
-      });
+    // Expand every future VEVENT into 1-hour sub-slots
+    const expanded = [];
+    for (const ev of vevents) {
+      if (!ev.start || !ev.end) continue;
+      if (ev.end <= now) continue; // past
+      const blocks = expandIntoHours(ev.start, ev.end);
+      for (const b of blocks) {
+        if (b.end <= now) continue;
+        expanded.push({
+          id: slotId(b.start, b.end),
+          title: '$600 / hr',
+          start: b.start,
+          end: b.end
+        });
+      }
+    }
+    console.log(`[SLOTS] 1h blocks (pre-DB filter): ${expanded.length}`);
 
-    console.log(`[SLOTS] Future slots (pre-DB filter): ${rawSlots.length}`);
-
-    // If no DB configured, return raw ICS slots
     if (!supabase) {
-      console.log(`[SLOTS] No Supabase configured; returning ${rawSlots.length} slots. (${Date.now() - t0}ms)`);
-      return res.json(rawSlots);
+      console.log(`[SLOTS] No Supabase configured; returning ${expanded.length} slots. (${Date.now() - t0}ms)`);
+      return res.json(expanded);
     }
 
-    // Fetch bookings
+    // Remove booked hours
     const bookedResp = await supabase.from('bookings').select('slot_id');
-    if (bookedResp.error) console.error('[SLOTS] Supabase bookings error:', bookedResp.error.message);
+    if (bookedResp.error) console.error('[SLOTS] bookings error:', bookedResp.error.message);
     const bookedSet = new Set((bookedResp.data || []).map(r => r.slot_id));
-    console.log(`[SLOTS] Booked slot_ids: ${bookedSet.size}`);
+    console.log(`[SLOTS] Booked hour-ids: ${bookedSet.size}`);
 
-    // Fetch active holds
+    // Remove active holds on hours
     const holdsResp = await supabase
       .from('slot_holds')
       .select('slot_id, expires_at')
       .gt('expires_at', new Date().toISOString());
-    if (holdsResp.error) console.error('[SLOTS] Supabase holds error:', holdsResp.error.message);
+    if (holdsResp.error) console.error('[SLOTS] holds error:', holdsResp.error.message);
     const heldSet = new Set((holdsResp.data || []).map(h => h.slot_id));
-    console.log(`[SLOTS] Active holds: ${heldSet.size}`);
+    console.log(`[SLOTS] Active held hour-ids: ${heldSet.size}`);
 
-    const filtered = rawSlots.filter(s => !bookedSet.has(s.id) && !heldSet.has(s.id));
-    console.log(`[SLOTS] Final slots (after DB filter): ${filtered.length}  — done in ${Date.now() - t0}ms`);
+    const filtered = expanded.filter(s => !bookedSet.has(s.id) && !heldSet.has(s.id));
+    console.log(`[SLOTS] Final 1h slots: ${filtered.length}  — done in ${Date.now() - t0}ms`);
 
     res.json(filtered);
   } catch (err) {
@@ -150,7 +189,7 @@ app.get('/api/slots', async (_req, res) => {
   }
 });
 
-// POST /api/create-checkout-session
+// Create checkout — $600/hr
 app.post('/api/create-checkout-session', async (req, res) => {
   try {
     if (!stripe) return res.status(500).json({ error: 'Stripe not configured (STRIPE_SECRET_KEY missing)' });
@@ -166,7 +205,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
       return res.status(409).json({ error: 'Slot already booked' });
     }
 
-    // Existing active hold?
+    // Active hold?
     const activeHold = await supabase
       .from('slot_holds')
       .select('*')
@@ -180,8 +219,8 @@ app.post('/api/create-checkout-session', async (req, res) => {
 
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-    // Pricing (adjust as needed)
-    const amountCents = 40000;
+    // PRICE: $600/hr
+    const amountCents = 60000;
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
@@ -194,7 +233,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
           price_data: {
             currency: 'usd',
             product_data: {
-              name: 'Private Ice Rental',
+              name: 'Private Ice Rental — 1 hour',
               description: `${purpose || 'Ice Time'} • ${new Date(start).toLocaleString()} – ${new Date(end).toLocaleTimeString()}`
             },
             unit_amount: amountCents
