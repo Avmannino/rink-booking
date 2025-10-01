@@ -25,13 +25,49 @@ const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
   : null;
 
+// ---- Startup diagnostics (one-time) ----
+const mask = (s, keep = 6) => (s ? `${s.slice(0, keep)}…(${s.length})` : '');
+console.log('[BOOT]',
+  JSON.stringify({
+    port: PORT,
+    clientOrigin: CLIENT_ORIGIN,
+    hasStripe: !!stripe,
+    hasSupabase: !!supabase,
+    hasIcsUrl: !!ICS_URL,
+    icsHost: (() => { try { return ICS_URL ? new URL(ICS_URL).host : null; } catch { return null; } })()
+  }, null, 2)
+);
+
 // Allow raw body only for webhook route
 app.use((req, res, next) => {
   if (req.originalUrl === '/api/stripe/webhook') return next();
   bodyParser.json()(req, res, next);
 });
 
-app.use(cors({ origin: CLIENT_ORIGIN }));
+// Allow both localhost and 127.0.0.1 during dev
+const allowedOrigins = new Set([
+  CLIENT_ORIGIN,                     // from .env, e.g. http://localhost:5173
+  'http://localhost:5173',
+  'http://127.0.0.1:5173'
+]);
+
+app.use(cors({
+  origin(origin, cb) {
+    // allow non-browser requests (curl, server-to-server) which send no Origin
+    if (!origin) return cb(null, true);
+
+    // allow any of the dev origins above
+    if ([...allowedOrigins].some(o => o && origin.startsWith(o))) {
+      return cb(null, true);
+    }
+
+    // In dev you can loosen further by uncommenting the next line:
+    // if (process.env.NODE_ENV !== 'production') return cb(null, true);
+
+    return cb(new Error(`Not allowed by CORS: ${origin}`));
+  }
+}));
+
 
 // Health check
 app.get('/health', (_req, res) => {
@@ -53,36 +89,63 @@ function slotId(start, end) {
 
 // GET /api/slots — parse ICS, filter out booked/held
 app.get('/api/slots', async (_req, res) => {
+  const t0 = Date.now();
   try {
-    if (!ICS_URL) return res.status(500).json({ error: 'Missing AVAILABILITY_ICS_URL in .env' });
+    if (!ICS_URL) {
+      console.error('[SLOTS] Missing AVAILABILITY_ICS_URL in .env');
+      return res.status(500).json({ error: 'Missing AVAILABILITY_ICS_URL in .env' });
+    }
 
-    const events = await ical.async.fromURL(ICS_URL);
+    console.log('[SLOTS] Fetching ICS…', new Date().toISOString());
+    let events;
+    try {
+      events = await ical.async.fromURL(ICS_URL);
+    } catch (e) {
+      console.error('[SLOTS] ical.fromURL failed:', e?.message || e);
+      return res.status(502).json({ error: 'Failed to fetch ICS. Check the URL (try Secret iCal address).' });
+    }
+
     const now = new Date();
+    const all = Object.values(events).filter(e => e?.type === 'VEVENT');
+    console.log(`[SLOTS] ICS VEVENTs total: ${all.length}`);
 
-    const rawSlots = Object.values(events)
-      .filter(e => e.type === 'VEVENT' && e.start && e.end && e.end > now)
+    const rawSlots = all
+      .filter(e => e.start && e.end && e.end > now)
       .map(e => {
         const start = new Date(e.start);
         const end = new Date(e.end);
         return { id: slotId(start, end), title: e.summary || 'Available Ice', start, end };
       });
 
-    if (!supabase) return res.json(rawSlots); // if DB not set, just show ICS
+    console.log(`[SLOTS] Future slots (pre-DB filter): ${rawSlots.length}`);
 
-    const { data: bookedRows } = await supabase.from('bookings').select('slot_id');
-    const bookedSet = new Set((bookedRows || []).map(r => r.slot_id));
+    // If no DB configured, return raw ICS slots
+    if (!supabase) {
+      console.log(`[SLOTS] No Supabase configured; returning ${rawSlots.length} slots. (${Date.now() - t0}ms)`);
+      return res.json(rawSlots);
+    }
 
-    const { data: holds } = await supabase
+    // Fetch bookings
+    const bookedResp = await supabase.from('bookings').select('slot_id');
+    if (bookedResp.error) console.error('[SLOTS] Supabase bookings error:', bookedResp.error.message);
+    const bookedSet = new Set((bookedResp.data || []).map(r => r.slot_id));
+    console.log(`[SLOTS] Booked slot_ids: ${bookedSet.size}`);
+
+    // Fetch active holds
+    const holdsResp = await supabase
       .from('slot_holds')
       .select('slot_id, expires_at')
       .gt('expires_at', new Date().toISOString());
-
-    const heldSet = new Set((holds || []).map(h => h.slot_id));
+    if (holdsResp.error) console.error('[SLOTS] Supabase holds error:', holdsResp.error.message);
+    const heldSet = new Set((holdsResp.data || []).map(h => h.slot_id));
+    console.log(`[SLOTS] Active holds: ${heldSet.size}`);
 
     const filtered = rawSlots.filter(s => !bookedSet.has(s.id) && !heldSet.has(s.id));
+    console.log(`[SLOTS] Final slots (after DB filter): ${filtered.length}  — done in ${Date.now() - t0}ms`);
+
     res.json(filtered);
   } catch (err) {
-    console.error(err);
+    console.error('[SLOTS] Unexpected error:', err);
     res.status(500).json({ error: 'Failed to load slots' });
   }
 });
@@ -94,22 +157,31 @@ app.post('/api/create-checkout-session', async (req, res) => {
     if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
 
     const { slotId: sid, start, end, name, email, purpose } = req.body || {};
+    console.log('[CHECKOUT] Start', { sid, start, end, email });
 
     // Already booked?
-    const { data: existing } = await supabase.from('bookings').select('slot_id').eq('slot_id', sid).maybeSingle();
-    if (existing) return res.status(409).json({ error: 'Slot already booked' });
+    const existing = await supabase.from('bookings').select('slot_id').eq('slot_id', sid).maybeSingle();
+    if (existing.data) {
+      console.warn('[CHECKOUT] Slot already booked', sid);
+      return res.status(409).json({ error: 'Slot already booked' });
+    }
 
     // Existing active hold?
-    const { data: activeHold } = await supabase
+    const activeHold = await supabase
       .from('slot_holds')
       .select('*')
       .eq('slot_id', sid)
       .gt('expires_at', new Date().toISOString())
       .maybeSingle();
-    if (activeHold) return res.status(409).json({ error: 'Slot currently on hold' });
+    if (activeHold.data) {
+      console.warn('[CHECKOUT] Slot currently on hold', sid);
+      return res.status(409).json({ error: 'Slot currently on hold' });
+    }
 
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-    const amountCents = 40000; // TODO: set your price logic
+
+    // Pricing (adjust as needed)
+    const amountCents = 40000;
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
@@ -143,9 +215,10 @@ app.post('/api/create-checkout-session', async (req, res) => {
       checkout_session_id: session.id
     });
 
+    console.log('[CHECKOUT] Session created', session.id);
     res.json({ url: session.url });
   } catch (err) {
-    console.error(err);
+    console.error('[CHECKOUT] Error:', err);
     res.status(500).json({ error: 'Failed to create checkout session' });
   }
 });
@@ -153,6 +226,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
 // Stripe webhook
 app.post('/api/stripe/webhook', bodyParser.raw({ type: 'application/json' }), async (req, res) => {
   if (!stripe || !STRIPE_WEBHOOK_SECRET) {
+    console.error('[WEBHOOK] Not configured: hasStripe?', !!stripe, 'hasSecret?', !!STRIPE_WEBHOOK_SECRET);
     return res.status(500).json({ error: 'Webhook not configured' });
   }
   const sig = req.headers['stripe-signature'];
@@ -160,9 +234,11 @@ app.post('/api/stripe/webhook', bodyParser.raw({ type: 'application/json' }), as
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    console.error('Webhook signature verify failed:', err.message);
+    console.error('[WEBHOOK] Signature verify failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
+
+  console.log('[WEBHOOK] Event:', event.type);
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
@@ -174,8 +250,8 @@ app.post('/api/stripe/webhook', bodyParser.raw({ type: 'application/json' }), as
 
     try {
       if (supabase) {
-        const { data: existing } = await supabase.from('bookings').select('slot_id').eq('slot_id', sid).maybeSingle();
-        if (!existing) {
+        const existing = await supabase.from('bookings').select('slot_id').eq('slot_id', sid).maybeSingle();
+        if (!existing.data) {
           await supabase.from('bookings').insert({
             slot_id: sid,
             start_ts: new Date(start).toISOString(),
@@ -186,11 +262,15 @@ app.post('/api/stripe/webhook', bodyParser.raw({ type: 'application/json' }), as
             currency: session.currency || 'usd',
             stripe_payment_intent: session.payment_intent
           });
+          console.log('[WEBHOOK] Booking inserted for', sid);
+        } else {
+          console.log('[WEBHOOK] Booking already exists for', sid);
         }
         await supabase.from('slot_holds').delete().eq('slot_id', sid);
+        console.log('[WEBHOOK] Hold cleared for', sid);
       }
     } catch (dbErr) {
-      console.error('DB error on webhook:', dbErr);
+      console.error('[WEBHOOK] DB error:', dbErr);
     }
   }
 
