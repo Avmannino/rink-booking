@@ -15,6 +15,7 @@
     "express": "^4.19.2",
     "luxon": "^3.7.2",
     "node-ical": "^0.17.0",
+    "resend": "^6.1.2",
     "stripe": "^16.0.0"
   },
   "devDependencies": {
