@@ -105,15 +105,15 @@ export default function App() {
     tip.style.position = 'fixed';
     tip.style.zIndex = '99999';
     tip.style.pointerEvents = 'none';
-    tip.style.background = '#fff';
+    tip.style.background = '#828282ff';
     tip.style.border = '1px solid #e5e7eb';
     tip.style.borderRadius = '8px';
     tip.style.boxShadow = '0 8px 24px rgba(0,0,0,0.15)';
     tip.style.padding = '10px 12px';
-    tip.style.fontSize = '12px';
-    tip.style.color = '#111827';
-    tip.style.maxWidth = '240px';
-    tip.style.lineHeight = '1.35';
+    tip.style.fontSize = '18px';
+    tip.style.color = '#ffffffff';
+    tip.style.maxWidth = '540px';
+    tip.style.lineHeight = '1.55';
 
     tip.innerHTML = `
       <div style="font-weight:700; margin-bottom:4px;">Available Ice</div>

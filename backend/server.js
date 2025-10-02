@@ -25,7 +25,6 @@ import bodyParser from 'body-parser';
 import Stripe from 'stripe';
 import ical from 'node-ical';
 import crypto from 'crypto';
-import { DateTime } from 'luxon';
 import { createClient } from '@supabase/supabase-js';
 
 const app = express();
@@ -40,7 +39,6 @@ const SUCCESS_URL = process.env.SUCCESS_URL || 'http://localhost:5173/success';
 const CANCEL_URL = process.env.CANCEL_URL || 'http://localhost:5173/cancel';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const ARENA_TZ = process.env.ARENA_TZ || 'America/New_York';
 
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' }) : null;
 const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
@@ -55,7 +53,6 @@ console.log('[BOOT]',
     hasStripe: !!stripe,
     hasSupabase: !!supabase,
     hasIcsUrl: !!ICS_URL,
-    arenaTz: ARENA_TZ,
     icsHost: (() => { try { return ICS_URL ? new URL(ICS_URL).host : null; } catch { return null; } })()
   }, null, 2)
 );
@@ -95,8 +92,7 @@ app.get('/health', (_req, res) => {
     ok: true,
     hasStripe: Boolean(stripe),
     hasSupabase: Boolean(supabase),
-    hasIcs: Boolean(ICS_URL),
-    arenaTz: ARENA_TZ
+    hasIcs: Boolean(ICS_URL)
   });
 });
 
@@ -108,21 +104,46 @@ function slotId(start, end) {
     .slice(0, 24);
 }
 
-// TZ-aware expansion: expand VEVENT into 1-hour blocks in ARENA_TZ (handles DST)
-function expandIntoHoursZoned(startDate, endDate, zone) {
-  let cur = DateTime.fromJSDate(new Date(startDate), { zone });
-  const end = DateTime.fromJSDate(new Date(endDate), { zone });
+/**
+ * Expand a VEVENT into bookable blocks:
+ * - If duration is 45–59 min: return ONE block of the exact duration.
+ * - If duration is >= 60 min: return 1h blocks; if remainder >= 45 min, include a final remainder block.
+ * Notes:
+ * - Uses plain Date math (UTC-safe). If you see DST edge cases, we can switch to Luxon.
+ */
+function expandIntoBlocks(startDate, endDate) {
+  const s = new Date(startDate);
+  const e = new Date(endDate);
+  const totalMs = e.getTime() - s.getTime();
+  const totalMin = Math.floor(totalMs / 60000);
   const blocks = [];
-  while (cur < end) {
-    const nxt = cur.plus({ hours: 1 });
-    if (nxt > end) break; // only full 60-min blocks
-    blocks.push({ start: cur, end: nxt });
-    cur = nxt;
+
+  // Short event: include if >= 45 minutes (exact block)
+  if (totalMin >= 45 && totalMin < 60) {
+    blocks.push({ start: new Date(s), end: new Date(e) });
+    return blocks;
   }
+
+  // Long event: full hours + remainder if >= 45 minutes
+  if (totalMin >= 60) {
+    let cur = new Date(s);
+    while (true) {
+      const nxt = new Date(cur.getTime() + 60 * 60 * 1000);
+      if (nxt > e) break;
+      blocks.push({ start: new Date(cur), end: new Date(nxt) });
+      cur = nxt;
+    }
+    const remainderMs = e.getTime() - cur.getTime();
+    const remainderMin = Math.floor(remainderMs / 60000);
+    if (remainderMin >= 45) {
+      blocks.push({ start: new Date(cur), end: new Date(e) });
+    }
+  }
+
   return blocks;
 }
 
-// GET /api/slots — parse ICS, expand to 1h blocks (ARENA_TZ), filter by holds/bookings
+// GET /api/slots — parse ICS, expand to bookable blocks (1h chunks + >=45m remainder), filter by holds/bookings
 app.get('/api/slots', async (_req, res) => {
   const t0 = Date.now();
   try {
@@ -140,27 +161,27 @@ app.get('/api/slots', async (_req, res) => {
       return res.status(502).json({ error: 'Failed to fetch ICS. Use the Secret iCal address.' });
     }
 
-    const now = DateTime.now().setZone(ARENA_TZ);
+    const now = new Date();
     const vevents = Object.values(events).filter(e => e?.type === 'VEVENT');
     console.log(`[SLOTS] ICS VEVENTs total: ${vevents.length}`);
 
-    // Expand every future VEVENT into 1-hour sub-slots in arena TZ
+    // Expand each VEVENT according to the rules above
     const expanded = [];
     for (const ev of vevents) {
       if (!ev.start || !ev.end) continue;
-      const blocks = expandIntoHoursZoned(ev.start, ev.end, ARENA_TZ);
+
+      const blocks = expandIntoBlocks(ev.start, ev.end);
       for (const b of blocks) {
-        if (b.end <= now) continue;
+        if (b.end <= now) continue; // only future blocks
         expanded.push({
-          id: slotId(b.start.toJSDate(), b.end.toJSDate()),
+          id: slotId(b.start, b.end),
           title: '$600 / hr',
-          // Send ISO strings WITH offset, so browser renders accurately
-          start: b.start.toISO(), // e.g., 2025-10-10T12:30:00-04:00
-          end: b.end.toISO()
+          start: b.start,
+          end: b.end
         });
       }
     }
-    console.log(`[SLOTS] 1h blocks (pre-DB filter): ${expanded.length}`);
+    console.log(`[SLOTS] Blocks (pre-DB filter): ${expanded.length}`);
 
     if (!supabase) {
       console.log(`[SLOTS] No Supabase configured; returning ${expanded.length} slots. (${Date.now() - t0}ms)`);
@@ -171,19 +192,19 @@ app.get('/api/slots', async (_req, res) => {
     const bookedResp = await supabase.from('bookings').select('slot_id');
     if (bookedResp.error) console.error('[SLOTS] bookings error:', bookedResp.error.message);
     const bookedSet = new Set((bookedResp.data || []).map(r => r.slot_id));
-    console.log(`[SLOTS] Booked hour-ids: ${bookedSet.size}`);
+    console.log(`[SLOTS] Booked ids: ${bookedSet.size}`);
 
-    // Remove active holds on hours
+    // Remove active holds
     const holdsResp = await supabase
       .from('slot_holds')
       .select('slot_id, expires_at')
       .gt('expires_at', new Date().toISOString());
     if (holdsResp.error) console.error('[SLOTS] holds error:', holdsResp.error.message);
     const heldSet = new Set((holdsResp.data || []).map(h => h.slot_id));
-    console.log(`[SLOTS] Active held hour-ids: ${heldSet.size}`);
+    console.log(`[SLOTS] Active held ids: ${heldSet.size}`);
 
     const filtered = expanded.filter(s => !bookedSet.has(s.id) && !heldSet.has(s.id));
-    console.log(`[SLOTS] Final 1h slots: ${filtered.length}  — done in ${Date.now() - t0}ms`);
+    console.log(`[SLOTS] Final slots: ${filtered.length}  — done in ${Date.now() - t0}ms`);
 
     res.json(filtered);
   } catch (err) {
@@ -192,32 +213,13 @@ app.get('/api/slots', async (_req, res) => {
   }
 });
 
-// Optional: quick peek endpoint to verify ICS parsing & timezones
-app.get('/debug/ics', async (_req, res) => {
-  try {
-    if (!ICS_URL) return res.status(500).json({ error: 'No AVAILABILITY_ICS_URL' });
-    const events = await ical.async.fromURL(ICS_URL);
-    const vevents = Object.values(events).filter(e => e?.type === 'VEVENT');
-    const sample = vevents.slice(0, 5).map(e => ({
-      summary: e.summary,
-      start_raw: e.start,
-      end_raw: e.end,
-      start_eastern: DateTime.fromJSDate(new Date(e.start), { zone: ARENA_TZ }).toISO(),
-      end_eastern: DateTime.fromJSDate(new Date(e.end), { zone: ARENA_TZ }).toISO()
-    }));
-    res.json({ count: vevents.length, arenaTz: ARENA_TZ, sample });
-  } catch (e) {
-    res.status(500).json({ error: e?.message || 'Failed to fetch ICS' });
-  }
-});
-
-// Create checkout — $600/hr
+// Create checkout — $600/hr (NOTE: currently charges 1 hour flat; adjust if you want prorated 45–59m price)
 app.post('/api/create-checkout-session', async (req, res) => {
   try {
     if (!stripe) return res.status(500).json({ error: 'Stripe not configured (STRIPE_SECRET_KEY missing)' });
     if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
 
-    const { slotId: sid, start, end, name, email, phone, purpose } = req.body || {};
+    const { slotId: sid, start, end, name, email, purpose } = req.body || {};
     console.log('[CHECKOUT] Start', { sid, start, end, email });
 
     // Already booked?
@@ -241,7 +243,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
 
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-    // PRICE: $600/hr
+    // PRICE: $600/hr (flat). If you want 45–59m to be prorated, say the word and I'll wire it up.
     const amountCents = 60000;
 
     const session = await stripe.checkout.sessions.create({
@@ -263,7 +265,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
           quantity: 1
         }
       ],
-      metadata: { slot_id: sid, start, end, name, email, phone: phone || '', purpose: purpose || '' }
+      metadata: { slot_id: sid, start, end, name, email, purpose: purpose || '' }
     });
 
     await supabase.from('slot_holds').insert({
