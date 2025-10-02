@@ -7,6 +7,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import BookingModal from './BookingModal';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
+const RATE_PER_HOUR = 600; // $600/hr
 
 // Duration like "60 min", "90 min", "2h", "2h 30m"
 function fmtDuration(ms) {
@@ -22,6 +23,16 @@ function fmtDuration(ms) {
 function fmtStartTime(date) {
   const s = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return s.replace(':00', '');
+}
+function fmtEndTime(date) {
+  const s = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return s.replace(':00', '');
+}
+function fmtDate(d) {
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+function fmtUSD(n) {
+  return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
 }
 
 export default function App() {
@@ -77,6 +88,94 @@ export default function App() {
     );
   };
 
+  // Hand cursor + tooltip on hover (positioned ABOVE and a bit RIGHT of cursor)
+  const handleMouseEnter = (arg) => {
+    arg.el.style.cursor = 'pointer';
+
+    const start = arg.event.start;
+    const end = arg.event.end;
+    if (!start || !end) return;
+
+    const hours = Math.max(0, (end - start) / 3_600_000);
+    const price = RATE_PER_HOUR * hours;
+
+    // Create tooltip element
+    const tip = document.createElement('div');
+    tip.className = 'slot-tooltip';
+    tip.style.position = 'fixed';
+    tip.style.zIndex = '99999';
+    tip.style.pointerEvents = 'none';
+    tip.style.background = '#fff';
+    tip.style.border = '1px solid #e5e7eb';
+    tip.style.borderRadius = '8px';
+    tip.style.boxShadow = '0 8px 24px rgba(0,0,0,0.15)';
+    tip.style.padding = '10px 12px';
+    tip.style.fontSize = '12px';
+    tip.style.color = '#111827';
+    tip.style.maxWidth = '240px';
+    tip.style.lineHeight = '1.35';
+
+    tip.innerHTML = `
+      <div style="font-weight:700; margin-bottom:4px;">Available Ice</div>
+      <div><strong>Date:</strong> ${fmtDate(start)}</div>
+      <div><strong>Start:</strong> ${fmtStartTime(start)}</div>
+      <div><strong>End:</strong> ${fmtEndTime(end)}</div>
+      <div style="margin-top:6px;"><strong>Price:</strong> ${fmtUSD(price)}</div>
+    `;
+
+    document.body.appendChild(tip);
+
+    const move = (e) => {
+      const offsetX = 12;                 // a little to the right
+      const offsetY = 12;                 // spacing from cursor
+      const rect = tip.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      // Desired position: ABOVE and RIGHT of cursor
+      let x = e.clientX + offsetX;
+      let y = e.clientY - rect.height - offsetY;
+
+      // If off the top, flip BELOW the cursor instead
+      if (y < 8) {
+        y = e.clientY + offsetY;
+      }
+      // Keep within right edge
+      if (x + rect.width + 8 > vw) {
+        x = vw - rect.width - 8;
+      }
+      // Keep within bottom edge (in case we flipped)
+      if (y + rect.height + 8 > vh) {
+        y = vh - rect.height - 8;
+      }
+
+      tip.style.left = `${x}px`;
+      tip.style.top = `${y}px`;
+    };
+
+    document.addEventListener('mousemove', move);
+
+    arg.el._slotTooltip = tip;
+    arg.el._slotTooltipMove = move;
+
+    // Initial position if we have the event
+    if (arg.jsEvent) {
+      move(arg.jsEvent);
+    }
+  };
+
+  const handleMouseLeave = (arg) => {
+    arg.el.style.cursor = '';
+    if (arg.el._slotTooltip) {
+      arg.el._slotTooltip.remove();
+      delete arg.el._slotTooltip;
+    }
+    if (arg.el._slotTooltipMove) {
+      document.removeEventListener('mousemove', arg.el._slotTooltipMove);
+      delete arg.el._slotTooltipMove;
+    }
+  };
+
   return (
     <div style={{ maxWidth: 'auto', margin: '5px auto', padding: 30 }}>
       <h1 style={{ textAlign: 'center', marginBottom: 12 }}>
@@ -87,7 +186,7 @@ export default function App() {
       <FullCalendar
         plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
         initialView="timeGridWeek"
-        timeZone='local'
+        timeZone="local"
         headerToolbar={{
           left: 'prev,next today',
           center: 'title',
@@ -98,7 +197,10 @@ export default function App() {
         slotMaxTime="22:00:00"
         events={calendarEvents}
         eventClick={handleEventClick}
-        eventContent={renderEventContent}   // centered label for month/week/day
+        eventContent={renderEventContent}           // centered label
+        eventDidMount={(arg) => { arg.el.style.cursor = 'pointer'; }} // hand cursor
+        eventMouseEnter={handleMouseEnter}          // tooltip show (above/right)
+        eventMouseLeave={handleMouseLeave}          // tooltip hide
         height="auto"
       />
 
