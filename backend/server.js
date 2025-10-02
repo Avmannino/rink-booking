@@ -25,6 +25,7 @@ import bodyParser from 'body-parser';
 import Stripe from 'stripe';
 import ical from 'node-ical';
 import crypto from 'crypto';
+import { DateTime } from 'luxon';
 import { createClient } from '@supabase/supabase-js';
 
 const app = express();
@@ -39,6 +40,7 @@ const SUCCESS_URL = process.env.SUCCESS_URL || 'http://localhost:5173/success';
 const CANCEL_URL = process.env.CANCEL_URL || 'http://localhost:5173/cancel';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const ARENA_TZ = process.env.ARENA_TZ || 'America/New_York';
 
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' }) : null;
 const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
@@ -53,6 +55,7 @@ console.log('[BOOT]',
     hasStripe: !!stripe,
     hasSupabase: !!supabase,
     hasIcsUrl: !!ICS_URL,
+    arenaTz: ARENA_TZ,
     icsHost: (() => { try { return ICS_URL ? new URL(ICS_URL).host : null; } catch { return null; } })()
   }, null, 2)
 );
@@ -92,7 +95,8 @@ app.get('/health', (_req, res) => {
     ok: true,
     hasStripe: Boolean(stripe),
     hasSupabase: Boolean(supabase),
-    hasIcs: Boolean(ICS_URL)
+    hasIcs: Boolean(ICS_URL),
+    arenaTz: ARENA_TZ
   });
 });
 
@@ -104,22 +108,21 @@ function slotId(start, end) {
     .slice(0, 24);
 }
 
-// Expand a VEVENT into 1-hour sub-intervals
-function expandIntoHours(startDate, endDate) {
-  const s = new Date(startDate);
-  const e = new Date(endDate);
-  const hours = [];
-  let cur = new Date(s);
-  while (cur < e) {
-    const nxt = new Date(cur.getTime() + 60 * 60 * 1000);
-    if (nxt > e) break; // only full 60-min blocks
-    hours.push({ start: new Date(cur), end: new Date(nxt) });
+// TZ-aware expansion: expand VEVENT into 1-hour blocks in ARENA_TZ (handles DST)
+function expandIntoHoursZoned(startDate, endDate, zone) {
+  let cur = DateTime.fromJSDate(new Date(startDate), { zone });
+  const end = DateTime.fromJSDate(new Date(endDate), { zone });
+  const blocks = [];
+  while (cur < end) {
+    const nxt = cur.plus({ hours: 1 });
+    if (nxt > end) break; // only full 60-min blocks
+    blocks.push({ start: cur, end: nxt });
     cur = nxt;
   }
-  return hours;
+  return blocks;
 }
 
-// GET /api/slots — parse ICS, expand to 1h blocks, filter by holds/bookings
+// GET /api/slots — parse ICS, expand to 1h blocks (ARENA_TZ), filter by holds/bookings
 app.get('/api/slots', async (_req, res) => {
   const t0 = Date.now();
   try {
@@ -137,23 +140,23 @@ app.get('/api/slots', async (_req, res) => {
       return res.status(502).json({ error: 'Failed to fetch ICS. Use the Secret iCal address.' });
     }
 
-    const now = new Date();
+    const now = DateTime.now().setZone(ARENA_TZ);
     const vevents = Object.values(events).filter(e => e?.type === 'VEVENT');
     console.log(`[SLOTS] ICS VEVENTs total: ${vevents.length}`);
 
-    // Expand every future VEVENT into 1-hour sub-slots
+    // Expand every future VEVENT into 1-hour sub-slots in arena TZ
     const expanded = [];
     for (const ev of vevents) {
       if (!ev.start || !ev.end) continue;
-      if (ev.end <= now) continue; // past
-      const blocks = expandIntoHours(ev.start, ev.end);
+      const blocks = expandIntoHoursZoned(ev.start, ev.end, ARENA_TZ);
       for (const b of blocks) {
         if (b.end <= now) continue;
         expanded.push({
-          id: slotId(b.start, b.end),
+          id: slotId(b.start.toJSDate(), b.end.toJSDate()),
           title: '$600 / hr',
-          start: b.start,
-          end: b.end
+          // Send ISO strings WITH offset, so browser renders accurately
+          start: b.start.toISO(), // e.g., 2025-10-10T12:30:00-04:00
+          end: b.end.toISO()
         });
       }
     }
@@ -189,13 +192,32 @@ app.get('/api/slots', async (_req, res) => {
   }
 });
 
+// Optional: quick peek endpoint to verify ICS parsing & timezones
+app.get('/debug/ics', async (_req, res) => {
+  try {
+    if (!ICS_URL) return res.status(500).json({ error: 'No AVAILABILITY_ICS_URL' });
+    const events = await ical.async.fromURL(ICS_URL);
+    const vevents = Object.values(events).filter(e => e?.type === 'VEVENT');
+    const sample = vevents.slice(0, 5).map(e => ({
+      summary: e.summary,
+      start_raw: e.start,
+      end_raw: e.end,
+      start_eastern: DateTime.fromJSDate(new Date(e.start), { zone: ARENA_TZ }).toISO(),
+      end_eastern: DateTime.fromJSDate(new Date(e.end), { zone: ARENA_TZ }).toISO()
+    }));
+    res.json({ count: vevents.length, arenaTz: ARENA_TZ, sample });
+  } catch (e) {
+    res.status(500).json({ error: e?.message || 'Failed to fetch ICS' });
+  }
+});
+
 // Create checkout — $600/hr
 app.post('/api/create-checkout-session', async (req, res) => {
   try {
     if (!stripe) return res.status(500).json({ error: 'Stripe not configured (STRIPE_SECRET_KEY missing)' });
     if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
 
-    const { slotId: sid, start, end, name, email, purpose } = req.body || {};
+    const { slotId: sid, start, end, name, email, phone, purpose } = req.body || {};
     console.log('[CHECKOUT] Start', { sid, start, end, email });
 
     // Already booked?
@@ -241,7 +263,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
           quantity: 1
         }
       ],
-      metadata: { slot_id: sid, start, end, name, email, purpose: purpose || '' }
+      metadata: { slot_id: sid, start, end, name, email, phone: phone || '', purpose: purpose || '' }
     });
 
     await supabase.from('slot_holds').insert({

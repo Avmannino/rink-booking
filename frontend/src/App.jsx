@@ -60,7 +60,7 @@ export default function App() {
     if (slot) setSelected(slot);
   };
 
-  // Unified label for ALL views: "8 AM - Available Ice (60 min)"
+  // Centered label for ALL views: "8 AM - Available Ice (60 min)"
   const renderEventContent = (arg) => {
     const start = arg.event.start;
     const end = arg.event.end;
@@ -70,12 +70,15 @@ export default function App() {
     const durLabel = fmtDuration(end - start);
     const text = `${timeLabel} - Available Ice (${durLabel})`;
 
-    // Return a simple div. (You can style this via CSS if desired.)
-    return <div>{text}</div>;
+    return (
+      <div style={styles.eventBox}>
+        {text}
+      </div>
+    );
   };
 
   return (
-    <div style={{ maxWidth: "auto", margin: '40px auto', padding: 16 }}>
+    <div style={{ maxWidth: 'auto', margin: '5px auto', padding: 30 }}>
       <h1 style={{ textAlign: 'center', marginBottom: 12 }}>
         Wings Arena — Book Available Ice
       </h1>
@@ -84,6 +87,7 @@ export default function App() {
       <FullCalendar
         plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
         initialView="timeGridWeek"
+        timeZone='local'
         headerToolbar={{
           left: 'prev,next today',
           center: 'title',
@@ -94,7 +98,7 @@ export default function App() {
         slotMaxTime="22:00:00"
         events={calendarEvents}
         eventClick={handleEventClick}
-        eventContent={renderEventContent}   // <— same label for month/week/day
+        eventContent={renderEventContent}   // centered label for month/week/day
         height="auto"
       />
 
@@ -118,3 +122,19 @@ export default function App() {
     </div>
   );
 }
+
+const styles = {
+  // This centers text inside each event box, across all views
+  eventBox: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    width: '100%',
+    height: '100%',
+    padding: '2px 6px',
+    lineHeight: 1.2,
+    whiteSpace: 'normal', // allow wrapping in month cells
+    fontWeight: 600
+  }
+};
