@@ -1,0 +1,23 @@
+/* --- TimeGrid (Week/Day) --- */
+/* Make each time slot row taller (default ~1.9em). Increase/decrease to taste. */
+.fc .fc-timegrid-slot {
+  height: 4.8em;
+}
+
+/* Optional: make the all-day row a bit taller */
+.fc .fc-timegrid .fc-daygrid-day-events {
+  min-height: 194px;
+}
+
+/* --- Month (DayGrid) --- */
+/* Give each month-day cell more vertical space */
+.fc .fc-daygrid-day-frame {
+  min-height: 140px; /* try 120–180px */
+}
+
+/* Ensure month rows expand to fit the extra height nicely */
+.fc .fc-daygrid-body,
+.fc .fc-daygrid-day,
+.fc .fc-daygrid-day-frame {
+  height: auto;
+}
