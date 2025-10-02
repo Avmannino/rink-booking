@@ -46,7 +46,7 @@ export default function App() {
   };
 
   return (
-    <div style={{ maxWidth: 1100, margin: '40px auto', padding: 16 }}>
+    <div style={{ Width: "auto", margin: '5px 50px', padding: 16 }}>
       <h1 style={{ textAlign: 'center', marginBottom: 12 }}>Wings Arena — Book Available Ice</h1>
       {loading && <p>Loading availability…</p>}
       <FullCalendar
@@ -59,7 +59,7 @@ export default function App() {
         }}
         allDaySlot={false}
         slotMinTime="06:00:00"
-        slotMaxTime="24:00:00"
+        slotMaxTime="23:00:00"
         events={calendarEvents}
         eventClick={handleEventClick}
         height="auto"
