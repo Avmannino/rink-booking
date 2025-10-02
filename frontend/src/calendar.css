@@ -1,23 +1,394 @@
-/* --- TimeGrid (Week/Day) --- */
-/* Make each time slot row taller (default ~1.9em). Increase/decrease to taste. */
+/* ===== Layout: mini calendar left, main calendar right ===== */
+.pageWrap {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 18px;
+  padding: 22px;
+  background: #0b1220;
+  min-height: 100vh;
+  color: #e5e7eb;
+}
+.miniWrap {
+  background: #0f172a;
+  border: 1px solid #1f2a44;
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  padding: 14px 10px 10px;
+  position: sticky;
+  bottom: 65px;
+  height: fit-content;
+}
+
+.leftCol {
+  display: flex;
+  flex-direction: column;
+  gap: 0px;
+  position: sticky;
+  top: -0px;
+  right: 13vw;
+  height: fit-content;
+}
+
+
+/* Logo above the mini calendar */
+.miniLogoWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f172a;
+  border: 1px solid #1f2a44;
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  padding: 10px 8px;
+}
+
+/* Logo above mini calendar */
+.miniLogoLink { 
+  display: block; 
+  text-align: center; 
+  margin: 4px 0 10px; 
+}
+.miniLogo { 
+  max-width: 280px; 
+  height: auto; 
+  filter: drop-shadow(0 -2px 14px rgba(255, 255, 255, 0.35)); 
+  cursor: pointer; 
+  position: relative;
+  right: 0.7vw;
+  bottom: 4vh;
+}
+
+
+/* Mini calendar header with centered title + arrows */
+.miniHeaderBar {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px; /* left arrow | centered title | right arrow */
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 8px 4px;
+  border-bottom: 1px solid #1f2a44;
+  margin-bottom: 8px;
+}
+
+.miniHeaderTitle {
+  text-align: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #93c5fd;
+  letter-spacing: 0.2px;
+}
+
+.miniHeaderBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 20px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid #334155;
+  background: #1f2a44;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 25px;   /* size of ‹ › glyphs */
+  line-height: 1;
+}
+.miniHeaderBtn:hover { background: #24304e; }
+
+
+.miniHeader {
+  font-weight: 700;
+  font-size: 14px;
+  color: #93c5fd;
+  padding: 0 6px 8px 6px;
+  border-bottom: 1px solid #1f2a44;
+  margin-bottom: 8px;
+}
+
+.mainWrap {
+  background: #0f172a;
+  border: 1px solid #1f2a44;
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  padding: 16px 16px 22px;
+}
+
+/* ===== Heading + centered arrows ===== */
+.title {
+  text-align: center;
+  margin: 4px 0 8px;
+  font-weight: 800;
+  font-size: 38px;
+  color: #f1f5f9;
+}
+
+.centerNav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin: 0px 0 0px;
+}
+
+.navBtn {
+  display: inline-flex;              /* center the content */
+  align-items: center;
+  justify-content: center;
+
+  width: 48px;                       /* square button */
+  height: 40px;                      /* tweak size to taste */
+  padding: 1;                        /* remove text padding */
+
+  background: #1f2a44;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  border-radius: 10px;
+  cursor: pointer;
+  position: relative;
+  top: 2vh;
+
+  font-size: 29px;                   /* size of the ‹ › glyph */
+  line-height: 1;                    /* avoid baseline offset */
+}
+
+.navBtn:hover { background: #24304e; }
+
+
+.currentMonth {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: #e2e8f0;
+  position: relative;
+  top:2vh;
+  font-size: 25px;
+}
+
+/* Right-aligned Month/Week/Day buttons */
+.viewRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.viewBtns {
+  display: flex;
+  gap: 25px;
+}
+
+.viewBtn {
+  padding: 10px 22px;
+  border-radius: 8px;
+  background: #0c0d54;
+  border: 1px solid #334155;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.viewBtn.active {
+  background: #8b8b8b;
+  color: #000;
+  border: 2px solid #fff;
+}
+
+/* Loading */
+.loading {
+  color: #94a3b8;
+  text-align: center;
+}
+
+/* ===== FullCalendar dark theme overrides ===== */
+.fc {
+  --fc-border-color: #1f2a44;
+  --fc-page-bg-color: #0f172a;
+  --fc-neutral-bg-color: #0f172a;
+  --fc-list-border-color: #1f2a44;
+  --fc-now-indicator-color: #ef4444;
+  --fc-today-bg-color: #0b1431;
+  --fc-event-text-color: #e5e7eb;
+}
+
+.fc .fc-toolbar.fc-header-toolbar {
+  border-bottom: 1px solid #1f2a44;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+}
+
+.fc .fc-toolbar-title {
+  color: #cbd5e1;
+  font-weight: 700;
+}
+
+/* --- TimeGrid (Week/Day) row height --- */
 .fc .fc-timegrid-slot {
-  height: 4.8em;
+  border-bottom: 1px solid #1f2a44;
 }
 
-/* Optional: make the all-day row a bit taller */
-.fc .fc-timegrid .fc-daygrid-day-events {
-  min-height: 194px;
+.fc .fc-timegrid-axis-cushion,
+.fc .fc-daygrid-day-number {
+  color: #94a3b8;
+  font-weight: 600;
 }
 
-/* --- Month (DayGrid) --- */
-/* Give each month-day cell more vertical space */
-.fc .fc-daygrid-day-frame {
-  min-height: 140px; /* try 120–180px */
+/* brute-force: compress 30-min rows */
+.mainWrap .fc .fc-timegrid-slot {
+  height: 45px !important;           /* tune this */
+  max-height: 64px !important;
+  padding: 0 !important;
 }
 
-/* Ensure month rows expand to fit the extra height nicely */
-.fc .fc-daygrid-body,
-.fc .fc-daygrid-day,
-.fc .fc-daygrid-day-frame {
-  height: auto;
+/* also shrink the scroller so FC doesn’t re-expand the grid */
+.mainWrap .fc .fc-timegrid-body,
+.mainWrap .fc .fc-timegrid-body table {
+  height: auto !important;
 }
+
+
+/* --- Month (DayGrid) cell height for the MAIN calendar only --- */
+.mainWrap .fc .fc-daygrid-day-frame {
+  min-height: 140px;
+}
+
+.mainWrap .fc .fc-daygrid-day {
+  border-right: 1px solid #1f2a44;
+  border-bottom: 1px solid #1f2a44;
+}
+
+.mainWrap .fc .fc-daygrid-day.fc-day-today {
+  background: #ffffff;
+}
+
+.mainWrap .fc .fc-daygrid-day-top a {
+  color: #93c5fd;
+}
+
+/* Center event text */
+.eventText {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2px 6px;
+  line-height: 1.35;
+  white-space: normal;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* ===== Mini calendar look (compact full month) ===== */
+.miniWrap .fc {
+  --fc-border-color: #1f2a44;
+  --fc-page-bg-color: #0f172a;
+}
+
+/* single-letter weekday headers */
+.miniWrap .fc .fc-col-header-cell-cushion {
+  font-size: 12px;
+  font-weight: 700;
+  color: #93c5fd;
+}
+
+/* compact day cells */
+.miniWrap .fc .fc-daygrid-day {
+  border-right: 1px solid #1f2a44;
+  border-bottom: 1px solid #1f2a44;
+}
+
+.miniWrap .fc .fc-daygrid-day-frame {
+  min-height: 18px;
+  /* shorter cells */
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.miniWrap .fc .fc-daygrid-day-number {
+  font-size: 12px;
+  color: #ffffff;
+}
+
+/* TODAY in the mini calendar = subtle outline only (no solid fill) */
+.miniWrap .fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-frame {
+  background: transparent;
+  outline: 1px dashed #334155;
+}
+
+/* Hover */
+.miniWrap .fc .fc-daygrid-day:hover {
+  background: #3b4a66;
+}
+
+/* CLICKED day highlight – must win over fc-day-today */
+.miniWrap .fc .miniSelected .fc-daygrid-day-frame {
+  background: #1e293b !important;
+  /* stronger than today */
+  border-radius: 6px;
+}
+
+.miniWrap .fc .miniSelected:hover .fc-daygrid-day-frame {
+  background: #243447 !important;
+}
+
+/* Keep mini calendar fully expanded (no internal scrollbars) */
+.miniWrap .fc .fc-view-harness {
+  height: auto !important;
+}
+
+.miniWrap .fc .fc-scroller {
+  overflow: visible !important;
+}
+
+.miniWrap .fc .fc-daygrid-body {
+  height: auto !important;
+}
+
+.miniWrap .fc .fc-scrollgrid {
+  height: auto !important;
+  border: 0;
+}
+
+.miniWrap .fc .fc-view-harness,
+.miniWrap .fc .fc-daygrid-body,
+.miniWrap .fc table {
+  background: transparent;
+}
+
+/* --- Month (DayGrid) TODAY cell for the MAIN calendar --- */
+/* Replace the big white box with a subtle dark accent */
+.mainWrap .fc .fc-daygrid-day.fc-day-today {
+  background: rgba(96, 165, 250, 0.08);
+  /* soft blue tint */
+}
+
+
+/* Tooltips (JS sets core styles; radius for Safari) */
+.slot-tooltip {
+  border-radius: 10px;
+}
+
+/* Optional nicer scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #0b1220;
+}
+
+*::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #0b1220;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 8px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #3f4c6b;
+}
+

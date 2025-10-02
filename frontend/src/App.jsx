@@ -5,12 +5,15 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import BookingModal from './BookingModal';
-import './calendar.css'; // row heights / month cell height
+import './calendar.css'; // dark theme, layout, row heights, mini-cal styling
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
 const RATE_PER_HOUR = 600; // $600/hr
 
-// Duration like "60 min", "90 min", "2h", "2h 30m"
+// If you place your logo at frontend/public/logo.png it will be served from /logo.png
+const LOGO_SRC = '/logo.png';
+
+// --- small format helpers ---
 function fmtDuration(ms) {
   const totalMin = Math.round(ms / 60000);
   const h = Math.floor(totalMin / 60);
@@ -19,8 +22,6 @@ function fmtDuration(ms) {
   if (h) return `${h}h`;
   return `${totalMin} min`;
 }
-
-// Start time like "8 AM", "8:30 AM" (drops :00 for top-of-hour)
 function fmtStartTime(date) {
   const s = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return s.replace(':00', '');
@@ -30,10 +31,26 @@ function fmtEndTime(date) {
   return s.replace(':00', '');
 }
 function fmtDate(d) {
-  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  return d.toLocaleDateString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  });
 }
 function fmtUSD(n) {
-  return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
+  return n.toLocaleString(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2
+  });
+}
+// YYYY-MM-DD in local time (avoids UTC shifts)
+function toYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
 }
 
 export default function App() {
@@ -43,17 +60,25 @@ export default function App() {
 
   const [calTitle, setCalTitle] = useState('');
   const [currentView, setCurrentView] = useState('timeGridWeek');
+  const [currentDate, setCurrentDate] = useState(new Date());
 
-  const calendarRef = useRef(null);
+  // mini calendar title + selected day
+  const [miniTitle, setMiniTitle] = useState(
+    new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date())
+  );
+  const [selectedMiniISO, setSelectedMiniISO] = useState(toYMD(new Date()));
 
-  // Map API -> FC events (ignore API title; we standardize label in eventContent)
+  const mainCalRef = useRef(null);
+  const miniCalRef = useRef(null);
+
+  // Map API -> FC events
   const calendarEvents = useMemo(
     () =>
       events.map((s) => ({
         id: s.id,
         title: 'Available Ice',
         start: s.start,
-        end: s.end,
+        end: s.end
       })),
     [events]
   );
@@ -77,27 +102,18 @@ export default function App() {
     if (slot) setSelected(slot);
   };
 
-  // Centered label for ALL views: "8 AM - Available Ice (60 min)"
+  // Unified event label
   const renderEventContent = (arg) => {
     const start = arg.event.start;
     const end = arg.event.end;
     if (!start || !end) return null;
-
-    const timeLabel = fmtStartTime(start);
-    const durLabel = fmtDuration(end - start);
-    const text = `${timeLabel} - Available Ice (${durLabel})`;
-
-    return (
-      <div style={styles.eventText}>
-        {text}
-      </div>
-    );
+    const text = `${fmtStartTime(start)} - Available Ice (${fmtDuration(end - start)})`;
+    return <div className="eventText">{text}</div>;
   };
 
-  // Hover tooltip (above + right of cursor)
+  // Hover tooltip
   const handleMouseEnter = (arg) => {
     arg.el.style.cursor = 'pointer';
-
     const start = arg.event.start;
     const end = arg.event.end;
     if (!start || !end) return;
@@ -110,49 +126,43 @@ export default function App() {
     tip.style.position = 'fixed';
     tip.style.zIndex = '99999';
     tip.style.pointerEvents = 'none';
-    tip.style.background = '#ffffffef';
-    tip.style.border = '1px solid #b01e2c';
-    tip.style.borderRadius = '8px';
-    tip.style.boxShadow = '0 8px 24px rgba(0,0,0,0.15)';
+    tip.style.background = '#0b1220';
+    tip.style.border = '1px solid #334155';
+    tip.style.borderRadius = '10px';
+    tip.style.boxShadow = '0 10px 26px rgba(0,0,0,0.35)';
     tip.style.padding = '10px 12px';
-    tip.style.fontSize = '15px';
-    tip.style.color = '#111827';
-    tip.style.maxWidth = '290px';
+    tip.style.fontSize = '14px';
+    tip.style.color = '#e5e7eb';
+    tip.style.maxWidth = '300px';
     tip.style.lineHeight = '1.55';
-
     tip.innerHTML = `
-      <div style="font-weight:700; margin-bottom:4px;">Available Ice</div>
+      <div style="font-weight:700; margin-bottom:4px; color:#f1f5f9">Available Ice</div>
       <div><strong>Date:</strong> ${fmtDate(start)}</div>
       <div><strong>Start:</strong> ${fmtStartTime(start)}</div>
       <div><strong>End:</strong> ${fmtEndTime(end)}</div>
       <div style="margin-top:6px;"><strong>Price:</strong> ${fmtUSD(price)}</div>
     `;
-
     document.body.appendChild(tip);
 
     const move = (e) => {
-      const offsetX = 12, offsetY = 12;
+      const offX = 12, offY = 12;
       const rect = tip.getBoundingClientRect();
-      const vw = window.innerWidth, vh = window.innerHeight;
-
-      // above + right default
-      let x = e.clientX + offsetX;
-      let y = e.clientY - rect.height - offsetY;
-
-      if (y < 8) y = e.clientY + offsetY;                 // flip below if needed
+      const vw = innerWidth, vh = innerHeight;
+      // default above-right
+      let x = e.clientX + offX;
+      let y = e.clientY - rect.height - offY;
+      if (y < 8) y = e.clientY + offY; // flip below
       if (x + rect.width + 8 > vw) x = vw - rect.width - 8;
       if (y + rect.height + 8 > vh) y = vh - rect.height - 8;
-
       tip.style.left = `${x}px`;
       tip.style.top = `${y}px`;
     };
-
     document.addEventListener('mousemove', move);
+
     arg.el._slotTooltip = tip;
     arg.el._slotTooltipMove = move;
     if (arg.jsEvent) move(arg.jsEvent);
   };
-
   const handleMouseLeave = (arg) => {
     arg.el.style.cursor = '';
     if (arg.el._slotTooltip) {
@@ -165,225 +175,202 @@ export default function App() {
     }
   };
 
-  // Calendar API helpers
-  const getApi = () => calendarRef.current?.getApi();
-  const goPrev = () => getApi()?.prev();
-  const goNext = () => getApi()?.next();
-  const goToday = () => getApi()?.today();
+  // Main calendar API helpers
+  const getApi = () => mainCalRef.current?.getApi();
+  const goPrev = () => {
+    const api = getApi();
+    api?.prev();
+    const d = api?.getDate() ?? new Date();
+    setCurrentDate(d);
+    setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
+  };
+  const goNext = () => {
+    const api = getApi();
+    api?.next();
+    const d = api?.getDate() ?? new Date();
+    setCurrentDate(d);
+    setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
+  };
   const switchView = (viewName) => {
     setCurrentView(viewName);
     getApi()?.changeView(viewName);
   };
 
+  // Mini calendar -> jump main date AND show Day view + highlight
+  const handleMiniDateClick = (arg) => {
+    const api = getApi();
+    if (api) {
+      api.gotoDate(arg.date);
+      api.changeView('timeGridDay');      // switch to Day view
+      setCurrentView('timeGridDay');
+      setCurrentDate(arg.date);
+      setSelectedMiniISO(toYMD(arg.date)); // highlight this mini cell
+      setCalTitle(api.view.title);
+    }
+  };
+
+  // Mini calendar month nav (left/right arrows in mini header)
+  const miniApi = () => miniCalRef.current?.getApi();
+  const miniPrev = () => {
+    const api = miniApi();
+    if (!api) return;
+    api.prev();
+    // reflect month name immediately
+    setMiniTitle(new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
+      .format(api.view.currentStart));
+  };
+  const miniNext = () => {
+    const api = miniApi();
+    if (!api) return;
+    api.next();
+    setMiniTitle(new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
+      .format(api.view.currentStart));
+  };
+
   return (
-    <div style={{ maxWidth: 'auto', margin: '5px auto', paddingLeft: 0, paddingRight: 0, width: '95%' }}>
-      <h1 style={{ textAlign: 'center', marginBottom: 15 }}>
-        Wings Arena — Book Available Ice
-      </h1>
+    <div className="pageWrap">
+      {/* LEFT column: logo ABOVE the mini calendar container */}
+      <div className="leftCol">
+        <a
+          href="https://www.wingsarena.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="miniLogoLink"
+          aria-label="Go to Wings Arena website"
+        >
+          <img src={LOGO_SRC} alt="Wings Arena" className="miniLogo" />
+        </a>
 
-      {/* Custom header BAR (Today left, Title center, View buttons right) */}
-      <div style={styles.topBar}>
-        <div style={styles.topBarLeft}>
-          <button type="button" onClick={goToday} style={styles.topBtn}>Today</button>
-        </div>
-        <div style={styles.topBarCenter}>
-          <div style={styles.headerTitle}>{calTitle || '\u00A0'}</div>
-        </div>
-        <div style={styles.topBarRight}>
-          <button
-            type="button"
-            onClick={() => switchView('dayGridMonth')}
-            style={{ ...styles.viewBtn, ...(currentView === 'dayGridMonth' ? styles.viewBtnActive : {}) }}
-          >
-            Month
-          </button>
-          <button
-            type="button"
-            onClick={() => switchView('timeGridWeek')}
-            style={{ ...styles.viewBtn, ...(currentView === 'timeGridWeek' ? styles.viewBtnActive : {}) }}
-          >
-            Week
-          </button>
-          <button
-            type="button"
-            onClick={() => switchView('timeGridDay')}
-            style={{ ...styles.viewBtn, ...(currentView === 'timeGridDay' ? styles.viewBtnActive : {}) }}
-          >
-            Day
-          </button>
-        </div>
-      </div>
+        <aside className="miniWrap">
+          {/* Centered month with left/right arrows */}
+          <div className="miniHeaderBar">
+            <button className="miniHeaderBtn" onClick={miniPrev} aria-label="Previous month">‹</button>
+            <div className="miniHeaderTitle">{miniTitle}</div>
+            <button className="miniHeaderBtn" onClick={miniNext} aria-label="Next month">›</button>
+          </div>
 
-      {/* Centered Prev / Next directly UNDER the title */}
-      <div style={styles.navRow}>
-        <button type="button" onClick={goPrev} style={styles.navBtn} aria-label="Previous period">‹</button>
-        <button type="button" onClick={goNext} style={styles.navBtn} aria-label="Next period">›</button>
-      </div>
-
-      {loading && <p>Loading availability…</p>}
-
-      <FullCalendar
-        ref={calendarRef}
-        plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-        headerToolbar={false}            // we’re using our own header
-        initialView={currentView}
-        timeZone="local"
-        allDaySlot={false}
-        slotMinTime="06:00:00"
-        slotMaxTime="22:00:00"
-
-        /* time alignment */
-        slotDuration="00:30:00"
-        slotLabelInterval="01:00"
-        nowIndicator={true}
-
-        /* space for taller rows */
-        contentHeight={900}
-        expandRows={true}
-
-        events={calendarEvents}
-        eventClick={handleEventClick}
-        eventContent={renderEventContent}
-        eventDidMount={(arg) => {
-          // Style the actual event block; do NOT change vertical sizing/positioning.
-          const el = arg.el;
-          el.style.background = '#c6273f';
-          el.style.border = '1px solid #ffffffcf';
-          el.style.color = '#fff';
-          el.style.borderRadius = '10px';
-          el.style.boxShadow = '0 3px 10px rgba(0,0,0,0.12)';
-          el.style.cursor = 'pointer';
-
-          // Make it visually narrower without affecting vertical placement:
-          el.style.transform = 'scaleX(0.9)';
-          el.style.transformOrigin = 'center';
-        }}
-        eventMouseEnter={handleMouseEnter}
-        eventMouseLeave={handleMouseLeave}
-        datesSet={(info) => {
-          // Update our custom title whenever the calendar navigates or view changes
-          setCalTitle(info.view.title);
-          setCurrentView(info.view.type);
-        }}
-        height="auto"
-      />
-
-      {selected && (
-        <BookingModal
-          slot={selected}
-          onClose={() => setSelected(null)}
-          onCheckout={async (payload) => {
-            try {
-              const res = await axios.post(
-                `${API_BASE}/api/create-checkout-session`,
-                payload
+          <FullCalendar
+            ref={miniCalRef}
+            plugins={[dayGridPlugin, interactionPlugin]}
+            initialView="dayGridMonth"
+            headerToolbar={false}
+            dayHeaderFormat={{ weekday: 'narrow' }}   // one-letter weekday headers
+            fixedWeekCount={true}
+            showNonCurrentDates={true}
+            expandRows={true}
+            height="auto"
+            contentHeight="auto"
+            dayCellClassNames={(arg) => {
+              const classes = ['miniCell'];
+              if (toYMD(arg.date) === selectedMiniISO) classes.push('miniSelected');
+              return classes;
+            }}
+            dateClick={handleMiniDateClick}
+            initialDate={currentDate}
+            datesSet={(info) => {
+              // keep the mini title in sync whenever mini calendar changes month
+              setMiniTitle(
+                new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
+                  .format(info.view.currentStart)
               );
-              window.location.href = res.data.url;
-            } catch (e) {
-              alert(e.response?.data?.error || 'Failed to start checkout');
-            }
+            }}
+          />
+        </aside>
+      </div>
+
+      {/* RIGHT: main calendar */}
+      <main className="mainWrap">
+        <h1 className="title">Wings Arena — Book Available Ice</h1>
+
+        {/* centered arrows under the title */}
+        <div className="centerNav">
+          <button className="navBtn" onClick={goPrev} aria-label="Previous">‹</button>
+          <div className="currentMonth">
+            {calTitle || new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(currentDate)}
+          </div>
+          <button className="navBtn" onClick={goNext} aria-label="Next">›</button>
+        </div>
+
+        {/* right-aligned view buttons */}
+        <div className="viewRow">
+          <div className="viewBtns">
+            <button
+              className={`viewBtn ${currentView === 'dayGridMonth' ? 'active' : ''}`}
+              onClick={() => switchView('dayGridMonth')}
+            >
+              Month
+            </button>
+            <button
+              className={`viewBtn ${currentView === 'timeGridWeek' ? 'active' : ''}`}
+              onClick={() => switchView('timeGridWeek')}
+            >
+              Week
+            </button>
+            <button
+              className={`viewBtn ${currentView === 'timeGridDay' ? 'active' : ''}`}
+              onClick={() => switchView('timeGridDay')}
+            >
+              Day
+            </button>
+          </div>
+        </div>
+
+        {loading && <p className="loading">Loading availability…</p>}
+
+        <FullCalendar
+          ref={mainCalRef}
+          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+          headerToolbar={false}
+          initialView={currentView}
+          timeZone="local"
+          allDaySlot={false}
+          slotMinTime="06:00:00"
+          slotMaxTime="22:00:00"
+          slotDuration="00:30:00"
+          slotLabelInterval="01:00"
+          nowIndicator={true}
+          contentHeight={800}
+          expandRows={true}
+          events={calendarEvents}
+          eventClick={handleEventClick}
+          eventContent={renderEventContent}
+          eventDidMount={(arg) => {
+            const el = arg.el;
+            el.style.background = '#1e3a8a';
+            el.style.border = '1px solid #60a5fa33';
+            el.style.color = '#e5e7eb';
+            el.style.borderRadius = '10px';
+            el.style.boxShadow = '0 6px 16px rgba(0,0,0,0.35)';
+            el.style.cursor = 'pointer';
+            el.style.transform = 'scaleX(0.92)';
+            el.style.transformOrigin = 'center';
           }}
+          eventMouseEnter={handleMouseEnter}
+          eventMouseLeave={handleMouseLeave}
+          datesSet={(info) => {
+            setCalTitle(info.view.title);
+            setCurrentView(info.view.type);
+            setCurrentDate(info.view.currentStart);
+            setSelectedMiniISO(toYMD(info.view.currentStart)); // sync mini highlight with main date
+          }}
+          height="auto"
         />
-      )}
+
+        {selected && (
+          <BookingModal
+            slot={selected}
+            onClose={() => setSelected(null)}
+            onCheckout={async (payload) => {
+              try {
+                const res = await axios.post(`${API_BASE}/api/create-checkout-session`, payload);
+                window.location.href = res.data.url;
+              } catch (e) {
+                alert(e.response?.data?.error || 'Failed to start checkout');
+              }
+            }}
+          />
+        )}
+      </main>
     </div>
   );
 }
-
-const styles = {
-  // Header row: Today (left), Title (center), View buttons (right)
-  topBar: {
-    display: 'grid',
-    gridTemplateColumns: '1fr auto 1fr',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 4
-  },
-  topBarLeft: {
-    display: 'flex',
-    justifyContent: 'flex-start',
-    position: 'relative',
-    top: '5vh'
-  },
-  topBarCenter: {
-    display: 'flex',
-    justifyContent: 'center'
-  },
-  topBarRight: {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    gap: 18,
-    position: 'relative',
-    top: '5vh'
-  },
-  headerTitle: {
-    fontSize: '1.8rem',
-    fontWeight: 700,
-    lineHeight: 2.5
-  },
-  topBtn: {
-    minWidth: 95,
-    height: 45,
-    borderRadius: 8,
-    border: '2px solid rgba(0,0,0,0.15)',
-    background: '#131348ff',
-    color: '#ffffffff',
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: 'pointer'
-  },
-
-  // Prev/Next row centered under the title
-  navRow: {
-    display: 'flex',
-    gap: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 10
-  },
-  navBtn: {
-    minWidth: 75,
-    height: 38,
-    borderRadius: 8,
-    border: '1px solid rgba(0,0,0,0.15)',
-    background: '#ffffffff',
-    color: '#111827',
-    fontSize: '22px',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    fontWeight: 700,
-    cursor: 'pointer',
-
-  },
-
-  // View buttons (right side)
-  viewBtn: {
-    padding: '10px 22px',
-    borderRadius: 8,
-    background: '#0c0d54ff',
-    color: '#ffffffff',
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: 'pointer'
-  },
-  viewBtnActive: {
-    background: '#8b8b8bff',
-    color: '#000000ff',
-    border: '2px solid #ffffffff'
-  },
-
-  // Center the text inside the event block
-  eventText: {
-    width: '100%',
-    height: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    textAlign: 'center',
-    padding: '2px 6px',
-    lineHeight: 1.8,
-    whiteSpace: 'normal',
-    fontSize: '16.2px',
-    fontWeight: 400
-  }
-};
