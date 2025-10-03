@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 
 export default function Carousel({
   images = [],       // array of string URLs
-  interval = 4000,   // ms between slides
+  interval = 6000,   // ms between slides
   ariaLabel = "Image carousel"
 }) {
   const [index, setIndex] = useState(0);
@@ -68,9 +68,6 @@ export default function Carousel({
           </div>
         ))}
       </div>
-
-      <button className="carouselBtn prev" onClick={prev} aria-label="Previous slide">‹</button>
-      <button className="carouselBtn next" onClick={next} aria-label="Next slide">›</button>
 
       <div className="carouselDots" role="tablist" aria-label="Slide dots">
         {images.map((_, i) => (

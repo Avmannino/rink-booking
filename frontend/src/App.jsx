@@ -358,7 +358,7 @@ export default function App() {
             "/slide3.jpg",
             "/slide4.jpg",
           ]}
-          interval={4000}
+          interval={6000}
         />
       </div>
 
