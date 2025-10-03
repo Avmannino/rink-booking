@@ -63,8 +63,9 @@ function drawWeekSeparators() {
   const cols = document.querySelectorAll('.mainWrap .fc .fc-timegrid .fc-timegrid-col');
   if (!slots || !cols.length) return;
 
-  // ensure host is positioned
+  // ensure host is positioned and can't cause horizontal overflow
   slots.style.position = 'relative';
+  slots.style.overflow = 'hidden';
 
   // remove old lines
   slots.querySelectorAll('.fc-sep-line').forEach((el) => el.remove());
@@ -81,7 +82,8 @@ function drawWeekSeparators() {
     line.style.position = 'absolute';
     line.style.top = '0';
     line.style.bottom = '0';
-    line.style.left = `${Math.round(x)}px`;
+    // nudge left by 1px so we never push layout wider due to rounding
+    line.style.left = `${Math.max(0, Math.round(x) - 1)}px`;
     line.style.width = '1px';
     line.style.background = '#2a3658';
     line.style.pointerEvents = 'none';
@@ -377,7 +379,7 @@ export default function App() {
                 currentDate
               )}
           </div>
-          <button className="navBtn" onClick={goNext} aria-label="Next">
+        <button className="navBtn" onClick={goNext} aria-label="Next">
             ›
           </button>
         </div>
@@ -420,7 +422,10 @@ export default function App() {
           slotDuration="00:30:00"
           slotLabelInterval="01:00"
           nowIndicator={true}
-          contentHeight={900}
+
+          /* ↓↓↓ shorter overall calendar height */
+          contentHeight={620}
+
           expandRows={true}
           events={calendarEvents}
           eventClick={handleEventClick}

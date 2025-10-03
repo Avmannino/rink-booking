@@ -1,4 +1,9 @@
 /* ===== Layout: mini calendar left, main calendar right ===== */
+html, body {                      /* clamp the page to viewport width */
+  width: 100%;
+  overflow-x: hidden;
+}
+
 .pageWrap {
   display: grid;
   grid-template-columns: 260px 1fr;
@@ -7,6 +12,8 @@
   background: #0b1220;
   min-height: 100vh;
   color: #e5e7eb;
+  max-width: 100vw;              /* avoid 1–2px overflow */
+  overflow-x: hidden;
 }
 .miniWrap {
   background: #0f172a;
@@ -15,6 +22,7 @@
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
   padding: 14px 10px 10px;
   height: fit-content;
+  padding: 22px 36px 22px 22px;
 }
 
 .leftCol {
@@ -103,12 +111,22 @@
 }
 
 .mainWrap {
-  width:100%;
+  width: 100%;
   background: #0f172a;
   border: 1px solid #1f2a44;
   border-radius: 12px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
   padding: 16px 16px 22px;
+  max-width: 100%;               /* never exceed column */
+  overflow-x: hidden;            /* hide any stray 1px overflow */
+}
+
+/* clamp FC containers so they won't force min-width overflow */
+.mainWrap .fc,
+.mainWrap .fc .fc-scrollgrid,
+.mainWrap .fc .fc-view-harness {
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* ===== Heading + centered arrows ===== */
@@ -116,7 +134,7 @@
   text-align: center;
   margin: 4px 0 8px;
   font-weight: 800;
-  font-size: 38px;
+  font-size: 36px;
   color: #f1f5f9;
 }
 
@@ -125,41 +143,35 @@
   align-items: center;
   justify-content: center;
   gap: 24px;
-  margin: 0px 0 0px;
+  margin: 0 0 0;
 }
 
 .navBtn {
-  display: inline-flex; /* center the content */
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-
-  width: 48px; /* square button */
-  height: 40px; /* tweak size to taste */
-  padding: 1; /* remove text padding */
-
+  width: 44px;
+  height: 38px;
+  padding: 0;
   background: #1f2a44;
   border: 1px solid #334155;
   color: #cbd5e1;
   border-radius: 10px;
   cursor: pointer;
   position: relative;
-  top: 2vh;
-
-  font-size: 29px; /* size of the ‹ › glyph */
-  line-height: 1; /* avoid baseline offset */
+  top: 1.2vh;
+  font-size: 26px;
+  line-height: 1;
 }
-
-.navBtn:hover {
-  background: #24304e;
-}
+.navBtn:hover { background: #24304e; }
 
 .currentMonth {
   font-weight: 700;
   letter-spacing: 0.2px;
   color: #e2e8f0;
   position: relative;
-  top: 2vh;
-  font-size: 25px;
+  top: 1.2vh;
+  font-size: 22px;
 }
 
 /* Right-aligned Month/Week/Day buttons */
@@ -168,23 +180,17 @@
   justify-content: flex-end;
   margin-bottom: 8px;
 }
-
-.viewBtns {
-  display: flex;
-  gap: 25px;
-}
-
+.viewBtns { display: flex; gap: 18px; }
 .viewBtn {
-  padding: 10px 22px;
+  padding: 8px 16px;
   border-radius: 8px;
   background: #0c0d54;
   border: 1px solid #334155;
   color: #ffffff;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
 }
-
 .viewBtn.active {
   background: #8b8b8b;
   color: #000;
@@ -192,10 +198,7 @@
 }
 
 /* Loading */
-.loading {
-  color: #94a3b8;
-  text-align: center;
-}
+.loading { color: #94a3b8; text-align: center; }
 
 /* ===== FullCalendar dark theme overrides ===== */
 .fc {
@@ -219,21 +222,23 @@
   font-weight: 700;
 }
 
+/* axis & day numbers a bit smaller to fit more vertically */
 .fc .fc-timegrid-axis-cushion,
 .fc .fc-daygrid-day-number {
   color: #94a3b8;
   font-weight: 600;
+  font-size: 12px;
 }
 
-/* brute-force: compress 30-min rows */
+/* ==== BIG CHANGE: compress 30-min rows for shorter calendar ==== */
 .mainWrap .fc .fc-timegrid-slot {
-  height: 45px !important; /* tune this */
-  max-height: 64px !important;
+  height: 28px !important;           /* ← was 45px */
+  max-height: 28px !important;
   padding: 0 !important;
   border-bottom: 1px solid #1f2a44;
 }
 
-/* also shrink the scroller so FC doesn’t re-expand the grid */
+/* also ensure the body doesn't re-expand the grid */
 .mainWrap .fc .fc-timegrid-body,
 .mainWrap .fc .fc-timegrid-body table {
   height: auto !important;
@@ -242,33 +247,28 @@
 /* === Make the slots area host our full-height vertical separators === */
 .mainWrap .fc .fc-timegrid .fc-timegrid-slots {
   position: relative;      /* for absolutely positioned lines */
-  overflow: visible;       /* do not clip lines */
+  overflow: hidden;        /* prevent 1px poke-out that causes scroll */
+}
+
+/* keep all internal scrollers from creating horizontal scroll bars */
+.mainWrap .fc .fc-scroller,
+.mainWrap .fc .fc-scroller-liquid-absolute {
+  overflow-x: hidden !important;
 }
 
 /* style of injected separator lines */
-.fc-sep-line {
-  background: #2a3658;
-}
+.fc-sep-line { background: #2a3658; }
 
 /* --- Month (DayGrid) cell height for the MAIN calendar only --- */
-.mainWrap .fc .fc-daygrid-day-frame {
-  min-height: 140px;
-}
-
+.mainWrap .fc .fc-daygrid-day-frame { min-height: 120px; }
 .mainWrap .fc .fc-daygrid-day {
   border-right: 1px solid #1f2a44;
   border-bottom: 1px solid #1f2a44;
 }
+.mainWrap .fc .fc-daygrid-day.fc-day-today { background: #ffffff; }
+.mainWrap .fc .fc-daygrid-day-top a { color: #93c5fd; }
 
-.mainWrap .fc .fc-daygrid-day.fc-day-today {
-  background: #ffffff;
-}
-
-.mainWrap .fc .fc-daygrid-day-top a {
-  color: #93c5fd;
-}
-
-/* Center event text */
+/* Center event text — slightly smaller to fit compressed rows */
 .eventText {
   width: 100%;
   height: 100%;
@@ -277,10 +277,10 @@
   justify-content: center;
   text-align: center;
   padding: 2px 6px;
-  line-height: 1.35;
+  line-height: 1.25;
   white-space: normal;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 12px;       /* ← was 14px */
 }
 
 /* ===== Mini calendar look (compact full month) ===== */
@@ -301,17 +301,12 @@
   border-right: 1px solid #1f2a44;
   border-bottom: 1px solid #1f2a44;
 }
-
 .miniWrap .fc .fc-daygrid-day-frame {
   max-height: 45px !important;
   padding: 2px 4px;
   cursor: pointer;
 }
-
-.miniWrap .fc .fc-daygrid-day-number {
-  font-size: 12px;
-  color: #ffffff;
-}
+.miniWrap .fc .fc-daygrid-day-number { font-size: 12px; color: #ffffff; }
 
 /* TODAY in the mini calendar = subtle outline only (no solid fill) */
 .miniWrap .fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-frame {
@@ -320,43 +315,25 @@
 }
 
 /* Hover */
-.miniWrap .fc .fc-daygrid-day:hover {
-  background: #3b4a66;
-}
+.miniWrap .fc .fc-daygrid-day:hover { background: #3b4a66; }
 
 /* CLICKED day highlight – must win over fc-day-today */
 .miniWrap .fc .miniSelected .fc-daygrid-day-frame {
   background: #1e293b !important;
   border-radius: 6px;
 }
-
 .miniWrap .fc .miniSelected:hover .fc-daygrid-day-frame {
   background: #243447 !important;
 }
 
 /* Keep mini calendar fully expanded (no internal scrollbars) */
-.miniWrap .fc .fc-view-harness {
-  height: auto !important;
-}
-
-.miniWrap .fc .fc-scroller {
-  overflow: visible !important;
-}
-
-.miniWrap .fc .fc-daygrid-body {
-  height: auto !important;
-}
-
-.miniWrap .fc .fc-scrollgrid {
-  height: auto !important;
-  border: 0;
-}
-
+.miniWrap .fc .fc-view-harness { height: auto !important; }
+.miniWrap .fc .fc-scroller { overflow: visible !important; }
+.miniWrap .fc .fc-daygrid-body { height: auto !important; }
+.miniWrap .fc .fc-scrollgrid { height: auto !important; border: 0; }
 .miniWrap .fc .fc-view-harness,
 .miniWrap .fc .fc-daygrid-body,
-.miniWrap .fc table {
-  background: transparent;
-}
+.miniWrap .fc table { background: transparent; }
 
 /* --- Month (DayGrid) TODAY cell for the MAIN calendar --- */
 .mainWrap .fc .fc-daygrid-day.fc-day-today {
@@ -364,29 +341,14 @@
 }
 
 /* Tooltips (JS sets core styles; radius for Safari) */
-.slot-tooltip {
-  border-radius: 10px;
-}
+.slot-tooltip { border-radius: 10px; }
 
 /* Optional nicer scrollbars */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #334155 #0b1220;
-}
-*::-webkit-scrollbar {
-  height: 8px;
-  width: 8px;
-}
-*::-webkit-scrollbar-track {
-  background: #0b1220;
-}
-*::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 8px;
-}
-*::-webkit-scrollbar-thumb:hover {
-  background: #3f4c6b;
-}
+* { scrollbar-width: thin; scrollbar-color: #334155 #0b1220; }
+*::-webkit-scrollbar { height: 8px; width: 8px; }
+*::-webkit-scrollbar-track { background: #0b1220; }
+*::-webkit-scrollbar-thumb { background: #334155; border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: #3f4c6b; }
 
 /* --- Carousel --- */
 .carousel {
@@ -398,26 +360,15 @@
   border: 1px solid #1f2a44;
   box-shadow: 0 10px 24px rgba(0,0,0,.35);
 }
-
-.carouselTrack {
-  display: flex;
-  width: 100%;
-  transition: transform 500ms ease;
-}
-
+.carouselTrack { display: flex; width: 100%; transition: transform 500ms ease; }
 .carouselSlide {
   min-width: 100%;
-  aspect-ratio: 16 / 10;                   /* adjust to your media */
+  aspect-ratio: 16 / 10;
   display: grid;
   place-items: center;
   background: #0b1220;
 }
-.carouselSlide img {
-  width: 100%;
-  height: 100%;
-  object-fit:contain;                      /* or 'contain' if you prefer no crop */
-}
-
+.carouselSlide img { width: 100%; height: 100%; object-fit: contain; }
 .carouselDots {
   position: absolute;
   left: 50%; transform: translateX(-50%);
@@ -432,4 +383,3 @@
   cursor: pointer;
 }
 .carouselDots .dot.active { background: #94a3b8; }
-
