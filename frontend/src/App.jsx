@@ -8,7 +8,6 @@ import BookingModal from './BookingModal';
 import './calendar.css'; // dark theme, layout, row heights, mini-cal styling
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
-const RATE_PER_HOUR = 600; // $600/hr
 
 // If you place your logo at frontend/public/logo.png it will be served from /logo.png
 const LOGO_SRC = '/logo.png';
@@ -71,14 +70,12 @@ export default function App() {
   const mainCalRef = useRef(null);
   const miniCalRef = useRef(null);
 
-  // Map API -> FC events
+  // Map API -> FC events (keep all props like price_cents)
   const calendarEvents = useMemo(
     () =>
       events.map((s) => ({
-        id: s.id,
-        title: 'Available Ice',
-        start: s.start,
-        end: s.end
+        ...s,
+        title: 'Available Ice'
       })),
     [events]
   );
@@ -111,16 +108,14 @@ export default function App() {
     return <div className="eventText">{text}</div>;
   };
 
-  // Hover tooltip
+  // Hover tooltip (uses price_cents from API — not a rate)
   const handleMouseEnter = (arg) => {
     arg.el.style.cursor = 'pointer';
     const start = arg.event.start;
     const end = arg.event.end;
     if (!start || !end) return;
 
-    const hours = Math.max(0, (end - start) / 3_600_000);
-    const price = RATE_PER_HOUR * hours;
-
+    const priceCents = (arg.event.extendedProps && arg.event.extendedProps.price_cents) ? arg.event.extendedProps.price_cents : 0;
     const tip = document.createElement('div');
     tip.className = 'slot-tooltip';
     tip.style.position = 'fixed';
@@ -140,7 +135,7 @@ export default function App() {
       <div><strong>Date:</strong> ${fmtDate(start)}</div>
       <div><strong>Start:</strong> ${fmtStartTime(start)}</div>
       <div><strong>End:</strong> ${fmtEndTime(end)}</div>
-      <div style="margin-top:6px;"><strong>Price:</strong> ${fmtUSD(price)}</div>
+      <div style="margin-top:6px;"><strong>Price:</strong> ${fmtUSD(priceCents / 100)}</div>
     `;
     document.body.appendChild(tip);
 
@@ -176,24 +171,29 @@ export default function App() {
   };
 
   // Main calendar API helpers
-  const getApi = () => mainCalRef.current?.getApi();
+  const getApi = () => (mainCalRef.current && mainCalRef.current.getApi ? mainCalRef.current.getApi() : null);
   const goPrev = () => {
     const api = getApi();
-    api?.prev();
-    const d = api?.getDate() ?? new Date();
-    setCurrentDate(d);
-    setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
+    if (api) {
+      api.prev();
+      const d = api.getDate();
+      setCurrentDate(d);
+      setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
+    }
   };
   const goNext = () => {
     const api = getApi();
-    api?.next();
-    const d = api?.getDate() ?? new Date();
-    setCurrentDate(d);
-    setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
+    if (api) {
+      api.next();
+      const d = api.getDate();
+      setCurrentDate(d);
+      setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
+    }
   };
   const switchView = (viewName) => {
     setCurrentView(viewName);
-    getApi()?.changeView(viewName);
+    const api = getApi();
+    if (api) api.changeView(viewName);
   };
 
   // Mini calendar -> jump main date AND show Day view + highlight
@@ -207,24 +207,6 @@ export default function App() {
       setSelectedMiniISO(toYMD(arg.date)); // highlight this mini cell
       setCalTitle(api.view.title);
     }
-  };
-
-  // Mini calendar month nav (left/right arrows in mini header)
-  const miniApi = () => miniCalRef.current?.getApi();
-  const miniPrev = () => {
-    const api = miniApi();
-    if (!api) return;
-    api.prev();
-    // reflect month name immediately
-    setMiniTitle(new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
-      .format(api.view.currentStart));
-  };
-  const miniNext = () => {
-    const api = miniApi();
-    if (!api) return;
-    api.next();
-    setMiniTitle(new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
-      .format(api.view.currentStart));
   };
 
   return (
@@ -242,11 +224,37 @@ export default function App() {
         </a>
 
         <aside className="miniWrap">
-          {/* Centered month with left/right arrows */}
+          {/* mini calendar header with centered title and nav arrows */}
           <div className="miniHeaderBar">
-            <button className="miniHeaderBtn" onClick={miniPrev} aria-label="Previous month">‹</button>
+            <button
+              className="miniHeaderBtn"
+              type="button"
+              onClick={() => {
+                const miniApi = miniCalRef.current?.getApi();
+                if (miniApi) {
+                  miniApi.prev();
+                  const title = miniApi.view.title;
+                  setMiniTitle(title);
+                }
+              }}
+              aria-label="Previous month"
+            >‹</button>
+
             <div className="miniHeaderTitle">{miniTitle}</div>
-            <button className="miniHeaderBtn" onClick={miniNext} aria-label="Next month">›</button>
+
+            <button
+              className="miniHeaderBtn"
+              type="button"
+              onClick={() => {
+                const miniApi = miniCalRef.current?.getApi();
+                if (miniApi) {
+                  miniApi.next();
+                  const title = miniApi.view.title;
+                  setMiniTitle(title);
+                }
+              }}
+              aria-label="Next month"
+            >›</button>
           </div>
 
           <FullCalendar
@@ -255,8 +263,11 @@ export default function App() {
             initialView="dayGridMonth"
             headerToolbar={false}
             dayHeaderFormat={{ weekday: 'narrow' }}   // one-letter weekday headers
-            fixedWeekCount={true}
-            showNonCurrentDates={true}
+
+            /* show only current month's days */
+            fixedWeekCount={false}
+            showNonCurrentDates={false}
+
             expandRows={true}
             height="auto"
             contentHeight="auto"
@@ -268,7 +279,6 @@ export default function App() {
             dateClick={handleMiniDateClick}
             initialDate={currentDate}
             datesSet={(info) => {
-              // keep the mini title in sync whenever mini calendar changes month
               setMiniTitle(
                 new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
                   .format(info.view.currentStart)
@@ -295,19 +305,19 @@ export default function App() {
         <div className="viewRow">
           <div className="viewBtns">
             <button
-              className={`viewBtn ${currentView === 'dayGridMonth' ? 'active' : ''}`}
+              className={'viewBtn ' + (currentView === 'dayGridMonth' ? 'active' : '')}
               onClick={() => switchView('dayGridMonth')}
             >
               Month
             </button>
             <button
-              className={`viewBtn ${currentView === 'timeGridWeek' ? 'active' : ''}`}
+              className={'viewBtn ' + (currentView === 'timeGridWeek' ? 'active' : '')}
               onClick={() => switchView('timeGridWeek')}
             >
               Week
             </button>
             <button
-              className={`viewBtn ${currentView === 'timeGridDay' ? 'active' : ''}`}
+              className={'viewBtn ' + (currentView === 'timeGridDay' ? 'active' : '')}
               onClick={() => switchView('timeGridDay')}
             >
               Day
@@ -329,17 +339,17 @@ export default function App() {
           slotDuration="00:30:00"
           slotLabelInterval="01:00"
           nowIndicator={true}
-          contentHeight={800}
+          contentHeight={900}
           expandRows={true}
           events={calendarEvents}
           eventClick={handleEventClick}
           eventContent={renderEventContent}
           eventDidMount={(arg) => {
             const el = arg.el;
-            el.style.background = '#1e3a8a';
-            el.style.border = '1px solid #60a5fa33';
+            el.style.background = '#d60036';
+            el.style.border = '1px solid #ffffffff';
             el.style.color = '#e5e7eb';
-            el.style.borderRadius = '10px';
+            el.style.borderRadius = '6px';
             el.style.boxShadow = '0 6px 16px rgba(0,0,0,0.35)';
             el.style.cursor = 'pointer';
             el.style.transform = 'scaleX(0.92)';

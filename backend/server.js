@@ -26,7 +26,7 @@ import Stripe from 'stripe';
 import ical from 'node-ical';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
-import { Resend } from 'resend'; // <— NEW
+import nodemailer from 'nodemailer'; // <-- for SMTP email
 
 const app = express();
 
@@ -41,19 +41,21 @@ const CANCEL_URL = process.env.CANCEL_URL || 'http://localhost:5173/cancel';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-// ---- Email ENV (Resend) ----
+// mail settings
+const MAIL_PROVIDER = (process.env.MAIL_PROVIDER || '').toLowerCase(); // 'smtp' | 'resend'
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || '';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const FROM_EMAIL = process.env.FROM_EMAIL || '';
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';  // optional
-const TZ = process.env.TIMEZONE || 'UTC';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || '';
+const TIMEZONE = process.env.TIMEZONE || undefined; // optional
 
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' }) : null;
 const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
   : null;
-
-// Resend client
-const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 // ---- Startup diagnostics ----
 console.log('[BOOT]',
@@ -63,8 +65,8 @@ console.log('[BOOT]',
     hasStripe: !!stripe,
     hasSupabase: !!supabase,
     hasIcsUrl: !!ICS_URL,
-    hasResend: !!resend,
-    fromEmail: FROM_EMAIL ? true : false,
+    hasMailConfig: Boolean((MAIL_PROVIDER === 'smtp' && SMTP_USER && FROM_EMAIL) || (RESEND_API_KEY && FROM_EMAIL)),
+    mailProvider: MAIL_PROVIDER || (RESEND_API_KEY ? 'resend' : '(none)'),
     icsHost: (function () { try { return ICS_URL ? new URL(ICS_URL).host : null; } catch (e) { return null; } })()
   }, null, 2)
 );
@@ -109,7 +111,8 @@ app.get('/health', function (_req, res) {
     hasStripe: Boolean(stripe),
     hasSupabase: Boolean(supabase),
     hasIcs: Boolean(ICS_URL),
-    hasResend: Boolean(resend)
+    mailProvider: MAIL_PROVIDER || (RESEND_API_KEY ? 'resend' : null),
+    hasFromEmail: Boolean(FROM_EMAIL)
   });
 });
 
@@ -121,96 +124,169 @@ function slotId(start, end) {
     .slice(0, 24);
 }
 
-// Expand a VEVENT into 1-hour sub-intervals
-function expandIntoHours(startDate, endDate) {
+/* =========================
+   PRICING (tiered + prorated)
+   ========================= */
+
+// weekend helper
+function isWeekend(d) {
+  var day = d.getDay(); // 0=Sun..6=Sat
+  return day === 0 || day === 6;
+}
+
+// return hourly rate in USD cents for a given local Date
+function rateCentsAt(date) {
+  var h = date.getHours();
+  var m = date.getMinutes();
+  var t = h * 60 + m;
+  var wknd = isWeekend(date);
+
+  if (!wknd) {
+    // Weekdays (Mon–Fri)
+    // 5:35–6:35 = $250/hr
+    if (t >= (5*60+35) && t < (6*60+35)) return 25000;
+    // 6:35–15:45 = $495/hr
+    if (t >= (6*60+35) && t < (15*60+45)) return 49500;
+    // 15:45–21:45 = $945/hr
+    if (t >= (15*60+45) && t < (21*60+45)) return 94500;
+    // 21:45–22:45 = $495/hr
+    if (t >= (21*60+45) && t < (22*60+45)) return 49500;
+    return 0;
+  }
+
+  // Weekends (Sat–Sun)
+  // 5:50–6:50 = $250/hr
+  if (t >= (5*60+50) && t < (6*60+50)) return 25000;
+  // 6:50–21:45 = $945/hr
+  if (t >= (6*60+50) && t < (21*60+45)) return 94500;
+  // 21:45–22:45 = $495/hr
+  if (t >= (21*60+45) && t < (22*60+45)) return 49500;
+
+  return 0;
+}
+
+// Price any interval [startISO, endISO) in integer cents, prorated per minute.
+function priceIntervalCents(startISO, endISO) {
+  var start = new Date(startISO);
+  var end = new Date(endISO);
+  if (!(start instanceof Date) || !(end instanceof Date) || isNaN(start) || isNaN(end) || end <= start) {
+    return 0;
+  }
+
+  var total = 0;
+  var cur = new Date(start);
+  while (cur < end) {
+    var next = new Date(cur.getTime() + 60 * 1000); // +1 minute
+    var activeRate = rateCentsAt(cur);
+    if (activeRate > 0) {
+      total += Math.round(activeRate / 60); // per-minute cents
+    }
+    cur.setTime(next.getTime());
+  }
+  return total;
+}
+
+/* ==========================================
+   Expand VEVENT into segments:
+   - 60-minute blocks starting at event.start
+   - plus a final remainder block if remainder >= 40 minutes
+   - if total duration is 40–59 minutes, return a single block
+   ========================================== */
+function expandIntoSegments40(startDate, endDate) {
   var s = new Date(startDate);
   var e = new Date(endDate);
-  var hours = [];
+  var out = [];
+
+  var totalMs = e - s;
+  if (totalMs < 40 * 60 * 1000) {
+    // shorter than 40 min => not offered
+    return out;
+  }
+
   var cur = new Date(s);
+  var oneHourMs = 60 * 60 * 1000;
+
   while (cur < e) {
-    var nxt = new Date(cur.getTime() + 60 * 60 * 1000);
-    if (nxt > e) break; // only full 60-min blocks
-    hours.push({ start: new Date(cur), end: new Date(nxt) });
-    cur = nxt;
+    var nxt = new Date(cur.getTime() + oneHourMs);
+    if (nxt <= e) {
+      // full 60-min chunk fits
+      out.push({ start: new Date(cur), end: new Date(nxt) });
+      cur = nxt;
+    } else {
+      // remainder
+      var remMs = e - cur;
+      if (remMs >= 40 * 60 * 1000) {
+        out.push({ start: new Date(cur), end: new Date(e) });
+      }
+      break;
+    }
   }
-  return hours;
+
+  return out;
 }
 
-// ---------- Email helpers ----------
-function fmtDT(iso) {
-  try {
-    var d = new Date(iso);
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: TZ,
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
-    }).format(d);
-  } catch (e) {
-    return iso;
-  }
+/* =================
+   Email helpers
+   ================= */
+function fmtUSDFromCents(cents) {
+  return (cents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' });
 }
-function fmtUSD(cents) {
-  try {
-    return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-  } catch (e) {
-    return '$' + (cents / 100).toFixed(2);
-  }
-}
-function bookingEmailHTML(data) {
-  var name = data.name || 'there';
-  var email = data.email || '';
-  var start = data.start || '';
-  var end = data.end || '';
-  var amount_cents = data.amount_cents || 0;
-  var slot_id = data.slot_id || '';
 
-  return (
-    '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;">' +
-      '<h2 style="margin:0 0 12px">Your Ice Time is Booked! 🧊⛸️</h2>' +
-      '<p style="margin:0 0 10px">Hi ' + name + ',</p>' +
-      '<p style="margin:0 0 10px">Thanks for booking with <strong>Wings Arena</strong>. Here are your details:</p>' +
-      '<table style="border-collapse:collapse">' +
-        '<tr><td style="padding:4px 8px;color:#555">Start</td><td style="padding:4px 8px"><strong>' + fmtDT(start) + '</strong></td></tr>' +
-        '<tr><td style="padding:4px 8px;color:#555">End</td><td style="padding:4px 8px"><strong>' + fmtDT(end) + '</strong></td></tr>' +
-        '<tr><td style="padding:4px 8px;color:#555">Price</td><td style="padding:4px 8px"><strong>' + fmtUSD(amount_cents) + '</strong></td></tr>' +
-        '<tr><td style="padding:4px 8px;color:#555">Reference</td><td style="padding:4px 8px"><code>' + slot_id + '</code></td></tr>' +
-      '</table>' +
-      '<p style="margin:14px 0 0">If you need to make changes, reply to this email.</p>' +
-      '<p style="margin:10px 0 0;color:#666;font-size:12px">Time zone: ' + TZ + '</p>' +
-    '</div>'
-  );
-}
-async function sendBookingEmails(payload) {
-  if (!resend || !FROM_EMAIL) {
-    console.warn('[EMAIL] Skipped (no RESEND_API_KEY or FROM_EMAIL).');
-    return;
-  }
-  var html = bookingEmailHTML(payload);
-
-  // Customer email
-  await resend.emails.send({
-    from: FROM_EMAIL,
-    to: payload.email,
-    subject: 'Wings Arena: Booking Confirmation',
-    html: html
+function fmtWhen(startISO, endISO) {
+  const start = new Date(startISO);
+  const end = new Date(endISO);
+  const dt = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZone: TIMEZONE || undefined
   });
-
-  // Optional admin copy
-  if (ADMIN_EMAIL) {
-    await resend.emails.send({
-      from: FROM_EMAIL,
-      to: ADMIN_EMAIL,
-      subject: 'New booking: ' + fmtDT(payload.start) + ' – ' + fmtDT(payload.end) + ' (' + payload.email + ')',
-      html: html
-    });
-  }
+  const tOnly = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric', minute: '2-digit', timeZone: TIMEZONE || undefined
+  });
+  return `${dt.format(start)} – ${tOnly.format(end)}`;
 }
 
-// GET /api/slots — parse ICS, expand to 1h blocks, filter by holds/bookings
+// Send booking email via SMTP (nodemailer) or Resend (if configured)
+async function sendBookingEmail({ to, whenText, amountText }) {
+  if (!FROM_EMAIL) throw new Error('FROM_EMAIL is not set');
+
+  if (MAIL_PROVIDER === 'smtp' && SMTP_USER && SMTP_PASS) {
+    const transporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: false,
+      auth: { user: SMTP_USER, pass: SMTP_PASS }
+    });
+    const info = await transporter.sendMail({
+      from: FROM_EMAIL,
+      to,
+      subject: 'Wings Arena — Booking Confirmation',
+      text: `Thank you! Your ice time is booked.\n\nWhen: ${whenText}\nAmount: ${amountText}\n\nSee you at the rink!`,
+      html: `<p>Thank you! Your ice time is booked.</p>
+             <p><b>When:</b> ${whenText}<br/><b>Amount:</b> ${amountText}</p>
+             <p>Questions? Give us a shout at info@wingsarena.com | 203-357-1055</p>`
+    });
+    return info.messageId || 'smtp:ok';
+  }
+
+  if (RESEND_API_KEY) {
+    const { Resend } = await import('resend');
+    const resend = new Resend(RESEND_API_KEY);
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to,
+      subject: 'Wings Arena — Booking Confirmation',
+      html: `<p>Thank you! Your ice time is booked.</p>
+             <p><b>When:</b> ${whenText}<br/><b>Amount:</b> ${amountText}</p>
+             <p>See you at the rink!</p>`
+    });
+    if (error) throw error;
+    return data?.id || 'resend:ok';
+  }
+
+  throw new Error('No mail provider configured');
+}
+
+// GET /api/slots — parse ICS, expand segments, filter by holds/bookings, include price_cents
 app.get('/api/slots', async function (_req, res) {
   var t0 = Date.now();
   try {
@@ -234,48 +310,49 @@ app.get('/api/slots', async function (_req, res) {
     });
     console.log('[SLOTS] ICS VEVENTs total: ' + vevents.length);
 
-    // Expand every future VEVENT into 1-hour sub-slots
     var expanded = [];
     for (var i = 0; i < vevents.length; i++) {
       var ev = vevents[i];
       if (!ev.start || !ev.end) continue;
       if (ev.end <= now) continue; // past
-      var blocks = expandIntoHours(ev.start, ev.end);
-      for (var j = 0; j < blocks.length; j++) {
-        var b = blocks[j];
+
+      var segs = expandIntoSegments40(ev.start, ev.end);
+      for (var j = 0; j < segs.length; j++) {
+        var b = segs[j];
         if (b.end <= now) continue;
         expanded.push({
           id: slotId(b.start, b.end),
-          title: '$600 / hr',
+          title: 'Available Ice',
           start: b.start,
-          end: b.end
+          end: b.end,
+          price_cents: priceIntervalCents(b.start, b.end) // ⬅️ prorated slot price
         });
       }
     }
-    console.log('[SLOTS] 1h blocks (pre-DB filter): ' + expanded.length);
+    console.log('[SLOTS] segments (pre-DB filter): ' + expanded.length);
 
     if (!supabase) {
       console.log('[SLOTS] No Supabase configured; returning ' + expanded.length + ' slots. (' + (Date.now() - t0) + 'ms)');
       return res.json(expanded);
     }
 
-    // Remove booked hours
+    // Remove booked segments
     var bookedResp = await supabase.from('bookings').select('slot_id');
     if (bookedResp.error) console.error('[SLOTS] bookings error:', bookedResp.error.message);
     var bookedSet = new Set((bookedResp.data || []).map(function (r) { return r.slot_id; }));
-    console.log('[SLOTS] Booked hour-ids: ' + bookedSet.size);
+    console.log('[SLOTS] Booked segment-ids: ' + bookedSet.size);
 
-    // Remove active holds on hours
+    // Remove active holds
     var holdsResp = await supabase
       .from('slot_holds')
       .select('slot_id, expires_at')
       .gt('expires_at', new Date().toISOString());
     if (holdsResp.error) console.error('[SLOTS] holds error:', holdsResp.error.message);
     var heldSet = new Set((holdsResp.data || []).map(function (h) { return h.slot_id; }));
-    console.log('[SLOTS] Active held hour-ids: ' + heldSet.size);
+    console.log('[SLOTS] Active held segment-ids: ' + heldSet.size);
 
     var filtered = expanded.filter(function (s) { return !bookedSet.has(s.id) && !heldSet.has(s.id); });
-    console.log('[SLOTS] Final 1h slots: ' + filtered.length + '  — done in ' + (Date.now() - t0) + 'ms');
+    console.log('[SLOTS] Final segments: ' + filtered.length + '  — done in ' + (Date.now() - t0) + 'ms');
 
     res.json(filtered);
   } catch (err) {
@@ -284,7 +361,7 @@ app.get('/api/slots', async function (_req, res) {
   }
 });
 
-// Create checkout — $600/hr
+// Create checkout — charge exact per-slot price (tiered, prorated)
 app.post('/api/create-checkout-session', async function (req, res) {
   try {
     if (!stripe) return res.status(500).json({ error: 'Stripe not configured (STRIPE_SECRET_KEY missing)' });
@@ -321,8 +398,11 @@ app.post('/api/create-checkout-session', async function (req, res) {
 
     var expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-    // PRICE: $600/hr
-    var amountCents = 60000;
+    // PRICE: compute exact cents for this slot
+    var amountCents = priceIntervalCents(start, end);
+    if (amountCents <= 0) {
+      return res.status(400).json({ error: 'Selected slot is not billable.' });
+    }
 
     var session = await stripe.checkout.sessions.create({
       mode: 'payment',
@@ -335,7 +415,7 @@ app.post('/api/create-checkout-session', async function (req, res) {
           price_data: {
             currency: 'usd',
             product_data: {
-              name: 'Private Ice Rental — 1 hour',
+              name: 'Private Ice Rental',
               description: (purpose || 'Ice Time') + ' • ' +
                 new Date(start).toLocaleString() + ' – ' + new Date(end).toLocaleTimeString()
             },
@@ -413,19 +493,24 @@ app.post('/api/stripe/webhook', bodyParser.raw({ type: 'application/json' }), as
         console.log('[WEBHOOK] Hold cleared for', sid);
       }
 
-      // ---- Send confirmation emails (customer + optional admin) ----
+      // ---- Send confirmation emails ----
       try {
-        await sendBookingEmails({
-          name: name,
-          email: email,
-          start: start,
-          end: end,
-          amount_cents: session.amount_total || 0,
-          slot_id: sid
-        });
-        console.log('[EMAIL] Sent to', email);
-      } catch (e) {
-        console.error('[EMAIL] Failed:', e);
+        const whenText = fmtWhen(start, end);
+        const amountText = fmtUSDFromCents(session.amount_total || 0);
+
+        if (email) {
+          const id1 = await sendBookingEmail({ to: email, whenText, amountText });
+          console.log('[MAIL] Confirmation sent to', email, 'id:', id1);
+        } else {
+          console.warn('[MAIL] No customer email in session metadata.');
+        }
+
+        if (ADMIN_EMAIL) {
+          const id2 = await sendBookingEmail({ to: ADMIN_EMAIL, whenText, amountText });
+          console.log('[MAIL] Admin copy sent to', ADMIN_EMAIL, 'id:', id2);
+        }
+      } catch (mailErr) {
+        console.error('[MAIL] Failed to send confirmation:', mailErr?.message || mailErr);
       }
     } catch (dbErr) {
       console.error('[WEBHOOK] DB error:', dbErr);

@@ -9,17 +9,81 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
   const start = new Date(slot.start);
   const end = new Date(slot.end);
 
-  // ---- Pricing ----
-  const RATE_PER_HOUR = 600; // $600/hr
-  const hours = Math.max(0, (end - start) / 3_600_000); // duration in hours
-  const price = RATE_PER_HOUR * hours;
+  // ----------------------------
+  // Pricing helpers (match backend)
+  // ----------------------------
 
-  const fmtUSD = (n) =>
-    n.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
+  // Weekend helper
+  function isWeekend(d) {
+    const day = d.getDay(); // 0=Sun..6=Sat
+    return day === 0 || day === 6;
+  }
+
+  // Return hourly rate (in *cents*) for a given local Date within your bands
+  function rateCentsAt(date) {
+    const h = date.getHours();
+    const m = date.getMinutes();
+    const mins = h * 60 + m;
+    const wknd = isWeekend(date);
+
+    if (!wknd) {
+      // Weekdays (Mon–Fri)
+      // 5:35–6:35 = $250/hr
+      if (mins >= (5 * 60 + 35) && mins < (6 * 60 + 35)) return 25000;
+      // 6:35–15:45 = $495/hr
+      if (mins >= (6 * 60 + 35) && mins < (15 * 60 + 45)) return 49500;
+      // 15:45–21:45 = $945/hr
+      if (mins >= (15 * 60 + 45) && mins < (21 * 60 + 45)) return 94500;
+      // 21:45–22:45 = $495/hr
+      if (mins >= (21 * 60 + 45) && mins < (22 * 60 + 45)) return 49500;
+      return 0;
+    }
+
+    // Weekends (Sat–Sun)
+    // 5:50–6:50 = $250/hr
+    if (mins >= (5 * 60 + 50) && mins < (6 * 60 + 50)) return 25000;
+    // 6:50–21:45 = $945/hr
+    if (mins >= (6 * 60 + 50) && mins < (21 * 60 + 45)) return 94500;
+    // 21:45–22:45 = $495/hr
+    if (mins >= (21 * 60 + 45) && mins < (22 * 60 + 45)) return 49500;
+
+    return 0;
+  }
+
+  // Price any interval [start, end) by summing per-minute at the active rate
+  function priceIntervalCents(startDate, endDate) {
+    if (!(startDate instanceof Date) || !(endDate instanceof Date) || isNaN(startDate) || isNaN(endDate)) {
+      return 0;
+    }
+    if (endDate <= startDate) return 0;
+
+    let total = 0;
+    const cur = new Date(startDate);
+    while (cur < endDate) {
+      const next = new Date(cur.getTime() + 60 * 1000); // +1 minute
+      const activeRate = rateCentsAt(cur);
+      if (activeRate > 0) {
+        total += Math.round(activeRate / 60); // cents per minute
+      }
+      cur.setTime(next.getTime());
+    }
+    return total;
+  }
+
+  // Prefer server-computed price if provided; otherwise compute locally
+  const priceCents =
+    typeof slot.price_cents === 'number' ? slot.price_cents : priceIntervalCents(start, end);
+
+  const fmtUSD = (cents) =>
+    (cents / 100).toLocaleString(undefined, {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+    });
 
   const normalizePhone = (value) => {
     let v = value.replace(/[^\d+]/g, '');
-    if (/^\d{10}$/.test(v)) return `(${v.slice(0,3)}) ${v.slice(3,6)}-${v.slice(6)}`;
+    if (/^\d{10}$/.test(v)) return `(${v.slice(0, 3)}) ${v.slice(3, 6)}-${v.slice(6)}`;
     return value;
   };
 
@@ -39,13 +103,14 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
   return (
     <div style={styles.backdrop}>
       <div style={styles.modal}>
-        <h2 style={{ marginTop: 0 }}>Book Ice Time</h2>
+        <h2 style={{ marginTop: 0, color: '#E6E8F0' }}>Ice Time Booking - Wings Arena</h2>
 
-        <p style={{ marginTop: 0, marginBottom: 6 }}>
+        <p style={{ marginTop: 0, marginBottom: 6, color: '#CBD5E1' }}>
           <strong>When:</strong> {start.toLocaleString()} – {end.toLocaleTimeString()}
         </p>
-        <p style={{ marginTop: 0, marginBottom: 16 }}>
-          <strong>Price:</strong> {fmtUSD(price)} {hours !== 1 ? `(${hours} hrs @ ${fmtUSD(RATE_PER_HOUR)}/hr)` : `(${fmtUSD(RATE_PER_HOUR)}/hr)`}
+        <p style={{ marginTop: 0, marginBottom: 16, color: '#CBD5E1' }}>
+          <strong>Price:</strong> {fmtUSD(priceCents)}
+          {/* No hourly rate shown, per your request */}
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 12 }}>
@@ -113,24 +178,27 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
 const styles = {
   backdrop: {
     position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,0.4)',
+    background: 'rgba(0,0,0,0.5)',
     display: 'grid', placeItems: 'center',
     padding: 16, zIndex: 9999
   },
   modal: {
     width: '100%', maxWidth: 520,
-    background: '#040d33ff',
+    background: '#0f172a',                 // darker modal for your theme
+    border: '1px solid #1f2a44',
     borderRadius: 12,
     padding: 20,
-    boxShadow: '0 8px 15px rgba(255, 255, 255, 0.25)'
+    boxShadow: '0 16px 32px rgba(0,0,0,0.45)'
   },
-  label: { display: 'grid', gap: 6, fontSize: 14 },
+  label: { display: 'grid', gap: 6, fontSize: 14, color: '#E5E7EB' },
   input: {
-    width: '100%',
-    padding: '10px 0px',
+    width: '95%',
+    padding: '10px 12px',
     borderRadius: 10,
-    border: '1px solid #cbd5e1',
-    outline: 'none'
+    border: '1px solid #334155',
+    outline: 'none',
+    background: '#0b1220',
+    color: '#E5E7EB'
   },
   secondaryBtn: {
     appearance: 'none',
