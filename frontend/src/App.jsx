@@ -5,6 +5,8 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import BookingModal from './BookingModal';
+import Carousel from "./Carousel";
+
 import './calendar.css'; // dark theme, layout, row heights, mini-cal styling
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
@@ -349,6 +351,15 @@ export default function App() {
             }}
           />
         </aside>
+        <Carousel
+          images={[
+            "/slide1.jpg",
+            "/slide2.jpg",
+            "/slide3.jpg",
+            "/slide4.jpg",
+          ]}
+          interval={4000}
+        />
       </div>
 
       {/* RIGHT: main calendar */}
