@@ -14,8 +14,6 @@
   border-radius: 12px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
   padding: 14px 10px 10px;
-  position: sticky;
-  bottom: 65px;
   height: fit-content;
 }
 
@@ -23,12 +21,11 @@
   display: flex;
   flex-direction: column;
   gap: 0px;
-  position: sticky;
-  top: -0px;
-  right: 13vw;
+  position: relative;
+  top: 14.5vh;    
+  right: 0vw;
   height: fit-content;
 }
-
 
 /* Logo above the mini calendar */
 .miniLogoWrap {
@@ -43,21 +40,19 @@
 }
 
 /* Logo above mini calendar */
-.miniLogoLink { 
-  display: block; 
-  text-align: center; 
-  margin: 4px 0 10px; 
+.miniLogoLink {
+  display: block;
+  text-align: center;
+  margin: 4px 0 10px;
 }
-.miniLogo { 
-  max-width: 280px; 
-  height: auto; 
-  filter: drop-shadow(0 -2px 14px rgba(255, 255, 255, 0.35)); 
-  cursor: pointer; 
-  position: relative;
-  right: 0.7vw;
-  bottom: 4vh;
+.miniLogo {
+  max-width: 230px;
+  height: auto;
+  cursor: pointer;
+  position: absolute;
+  top: -19vh;
+  left: 0.5vw;
 }
-
 
 /* Mini calendar header with centered title + arrows */
 .miniHeaderBar {
@@ -90,11 +85,12 @@
   background: #1f2a44;
   color: #cbd5e1;
   cursor: pointer;
-  font-size: 25px;   /* size of ‹ › glyphs */
+  font-size: 25px; /* size of ‹ › glyphs */
   line-height: 1;
 }
-.miniHeaderBtn:hover { background: #24304e; }
-
+.miniHeaderBtn:hover {
+  background: #24304e;
+}
 
 .miniHeader {
   font-weight: 700;
@@ -131,13 +127,13 @@
 }
 
 .navBtn {
-  display: inline-flex;              /* center the content */
+  display: inline-flex; /* center the content */
   align-items: center;
   justify-content: center;
 
-  width: 48px;                       /* square button */
-  height: 40px;                      /* tweak size to taste */
-  padding: 1;                        /* remove text padding */
+  width: 48px; /* square button */
+  height: 40px; /* tweak size to taste */
+  padding: 1; /* remove text padding */
 
   background: #1f2a44;
   border: 1px solid #334155;
@@ -147,19 +143,20 @@
   position: relative;
   top: 2vh;
 
-  font-size: 29px;                   /* size of the ‹ › glyph */
-  line-height: 1;                    /* avoid baseline offset */
+  font-size: 29px; /* size of the ‹ › glyph */
+  line-height: 1; /* avoid baseline offset */
 }
 
-.navBtn:hover { background: #24304e; }
-
+.navBtn:hover {
+  background: #24304e;
+}
 
 .currentMonth {
   font-weight: 700;
   letter-spacing: 0.2px;
   color: #e2e8f0;
   position: relative;
-  top:2vh;
+  top: 2vh;
   font-size: 25px;
 }
 
@@ -220,11 +217,6 @@
   font-weight: 700;
 }
 
-/* --- TimeGrid (Week/Day) row height --- */
-.fc .fc-timegrid-slot {
-  border-bottom: 1px solid #1f2a44;
-}
-
 .fc .fc-timegrid-axis-cushion,
 .fc .fc-daygrid-day-number {
   color: #94a3b8;
@@ -233,9 +225,10 @@
 
 /* brute-force: compress 30-min rows */
 .mainWrap .fc .fc-timegrid-slot {
-  height: 45px !important;           /* tune this */
+  height: 45px !important; /* tune this */
   max-height: 64px !important;
   padding: 0 !important;
+  border-bottom: 1px solid #1f2a44;
 }
 
 /* also shrink the scroller so FC doesn’t re-expand the grid */
@@ -244,6 +237,16 @@
   height: auto !important;
 }
 
+/* === Make the slots area host our full-height vertical separators === */
+.mainWrap .fc .fc-timegrid .fc-timegrid-slots {
+  position: relative;      /* for absolutely positioned lines */
+  overflow: visible;       /* do not clip lines */
+}
+
+/* style of injected separator lines */
+.fc-sep-line {
+  background: #2a3658;
+}
 
 /* --- Month (DayGrid) cell height for the MAIN calendar only --- */
 .mainWrap .fc .fc-daygrid-day-frame {
@@ -298,8 +301,7 @@
 }
 
 .miniWrap .fc .fc-daygrid-day-frame {
-  min-height: 18px;
-  /* shorter cells */
+  max-height: 45px !important;
   padding: 2px 4px;
   cursor: pointer;
 }
@@ -323,7 +325,6 @@
 /* CLICKED day highlight – must win over fc-day-today */
 .miniWrap .fc .miniSelected .fc-daygrid-day-frame {
   background: #1e293b !important;
-  /* stronger than today */
   border-radius: 6px;
 }
 
@@ -356,12 +357,9 @@
 }
 
 /* --- Month (DayGrid) TODAY cell for the MAIN calendar --- */
-/* Replace the big white box with a subtle dark accent */
 .mainWrap .fc .fc-daygrid-day.fc-day-today {
-  background: rgba(96, 165, 250, 0.08);
-  /* soft blue tint */
+  background: rgba(96, 165, 250, 0.08); /* soft blue tint */
 }
-
 
 /* Tooltips (JS sets core styles; radius for Safari) */
 .slot-tooltip {
@@ -373,22 +371,17 @@
   scrollbar-width: thin;
   scrollbar-color: #334155 #0b1220;
 }
-
 *::-webkit-scrollbar {
   height: 8px;
   width: 8px;
 }
-
 *::-webkit-scrollbar-track {
   background: #0b1220;
 }
-
 *::-webkit-scrollbar-thumb {
   background: #334155;
   border-radius: 8px;
 }
-
 *::-webkit-scrollbar-thumb:hover {
   background: #3f4c6b;
 }
-

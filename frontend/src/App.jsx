@@ -52,6 +52,42 @@ function toYMD(d) {
   return `${y}-${m}-${da}`;
 }
 
+/* ============================
+   Full-height vertical separators
+   ============================ */
+function drawWeekSeparators() {
+  // time-grid scroller/slots area
+  const slots = document.querySelector('.mainWrap .fc .fc-timegrid .fc-timegrid-slots');
+  const cols = document.querySelectorAll('.mainWrap .fc .fc-timegrid .fc-timegrid-col');
+  if (!slots || !cols.length) return;
+
+  // ensure host is positioned
+  slots.style.position = 'relative';
+
+  // remove old lines
+  slots.querySelectorAll('.fc-sep-line').forEach((el) => el.remove());
+
+  const baseRect = slots.getBoundingClientRect();
+
+  cols.forEach((col, i) => {
+    if (i === cols.length - 1) return; // no line after last day
+    const rect = col.getBoundingClientRect();
+    const x = rect.right - baseRect.left;
+
+    const line = document.createElement('div');
+    line.className = 'fc-sep-line';
+    line.style.position = 'absolute';
+    line.style.top = '0';
+    line.style.bottom = '0';
+    line.style.left = `${Math.round(x)}px`;
+    line.style.width = '1px';
+    line.style.background = '#2a3658';
+    line.style.pointerEvents = 'none';
+    line.style.zIndex = '50';
+    slots.appendChild(line);
+  });
+}
+
 export default function App() {
   const [events, setEvents] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -94,6 +130,17 @@ export default function App() {
     })();
   }, []);
 
+  // keep separators in sync with resizes/first paint
+  useEffect(() => {
+    const r = requestAnimationFrame(drawWeekSeparators);
+    const onResize = () => drawWeekSeparators();
+    window.addEventListener('resize', onResize);
+    return () => {
+      cancelAnimationFrame(r);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
   const handleEventClick = (info) => {
     const slot = events.find((e) => e.id === info.event.id);
     if (slot) setSelected(slot);
@@ -115,7 +162,10 @@ export default function App() {
     const end = arg.event.end;
     if (!start || !end) return;
 
-    const priceCents = (arg.event.extendedProps && arg.event.extendedProps.price_cents) ? arg.event.extendedProps.price_cents : 0;
+    const priceCents =
+      arg.event.extendedProps && arg.event.extendedProps.price_cents
+        ? arg.event.extendedProps.price_cents
+        : 0;
     const tip = document.createElement('div');
     tip.className = 'slot-tooltip';
     tip.style.position = 'fixed';
@@ -140,9 +190,11 @@ export default function App() {
     document.body.appendChild(tip);
 
     const move = (e) => {
-      const offX = 12, offY = 12;
+      const offX = 12,
+        offY = 12;
       const rect = tip.getBoundingClientRect();
-      const vw = innerWidth, vh = innerHeight;
+      const vw = innerWidth,
+        vh = innerHeight;
       // default above-right
       let x = e.clientX + offX;
       let y = e.clientY - rect.height - offY;
@@ -171,7 +223,8 @@ export default function App() {
   };
 
   // Main calendar API helpers
-  const getApi = () => (mainCalRef.current && mainCalRef.current.getApi ? mainCalRef.current.getApi() : null);
+  const getApi = () =>
+    mainCalRef.current && mainCalRef.current.getApi ? mainCalRef.current.getApi() : null;
   const goPrev = () => {
     const api = getApi();
     if (api) {
@@ -179,6 +232,7 @@ export default function App() {
       const d = api.getDate();
       setCurrentDate(d);
       setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
+      setTimeout(drawWeekSeparators, 0);
     }
   };
   const goNext = () => {
@@ -188,12 +242,16 @@ export default function App() {
       const d = api.getDate();
       setCurrentDate(d);
       setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
+      setTimeout(drawWeekSeparators, 0);
     }
   };
   const switchView = (viewName) => {
     setCurrentView(viewName);
     const api = getApi();
-    if (api) api.changeView(viewName);
+    if (api) {
+      api.changeView(viewName);
+      setTimeout(drawWeekSeparators, 0);
+    }
   };
 
   // Mini calendar -> jump main date AND show Day view + highlight
@@ -201,11 +259,12 @@ export default function App() {
     const api = getApi();
     if (api) {
       api.gotoDate(arg.date);
-      api.changeView('timeGridDay');      // switch to Day view
+      api.changeView('timeGridDay'); // switch to Day view
       setCurrentView('timeGridDay');
       setCurrentDate(arg.date);
       setSelectedMiniISO(toYMD(arg.date)); // highlight this mini cell
       setCalTitle(api.view.title);
+      setTimeout(drawWeekSeparators, 0);
     }
   };
 
@@ -238,7 +297,9 @@ export default function App() {
                 }
               }}
               aria-label="Previous month"
-            >‹</button>
+            >
+              ‹
+            </button>
 
             <div className="miniHeaderTitle">{miniTitle}</div>
 
@@ -254,7 +315,9 @@ export default function App() {
                 }
               }}
               aria-label="Next month"
-            >›</button>
+            >
+              ›
+            </button>
           </div>
 
           <FullCalendar
@@ -262,12 +325,11 @@ export default function App() {
             plugins={[dayGridPlugin, interactionPlugin]}
             initialView="dayGridMonth"
             headerToolbar={false}
-            dayHeaderFormat={{ weekday: 'narrow' }}   // one-letter weekday headers
+            dayHeaderFormat={{ weekday: 'narrow' }} // one-letter weekday headers
 
             /* show only current month's days */
             fixedWeekCount={false}
             showNonCurrentDates={false}
-
             expandRows={true}
             height="auto"
             contentHeight="auto"
@@ -280,8 +342,9 @@ export default function App() {
             initialDate={currentDate}
             datesSet={(info) => {
               setMiniTitle(
-                new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
-                  .format(info.view.currentStart)
+                new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
+                  info.view.currentStart
+                )
               );
             }}
           />
@@ -290,15 +353,22 @@ export default function App() {
 
       {/* RIGHT: main calendar */}
       <main className="mainWrap">
-        <h1 className="title">Wings Arena — Book Available Ice</h1>
+        <h1 className="title">Ice Reservation Availability</h1>
 
         {/* centered arrows under the title */}
         <div className="centerNav">
-          <button className="navBtn" onClick={goPrev} aria-label="Previous">‹</button>
+          <button className="navBtn" onClick={goPrev} aria-label="Previous">
+            ‹
+          </button>
           <div className="currentMonth">
-            {calTitle || new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(currentDate)}
+            {calTitle ||
+              new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
+                currentDate
+              )}
           </div>
-          <button className="navBtn" onClick={goNext} aria-label="Next">›</button>
+          <button className="navBtn" onClick={goNext} aria-label="Next">
+            ›
+          </button>
         </div>
 
         {/* right-aligned view buttons */}
@@ -346,7 +416,7 @@ export default function App() {
           eventContent={renderEventContent}
           eventDidMount={(arg) => {
             const el = arg.el;
-            el.style.background = '#d60036';
+            el.style.background = '#d60035ff';
             el.style.border = '1px solid #ffffffff';
             el.style.color = '#e5e7eb';
             el.style.borderRadius = '6px';
@@ -362,6 +432,9 @@ export default function App() {
             setCurrentView(info.view.type);
             setCurrentDate(info.view.currentStart);
             setSelectedMiniISO(toYMD(info.view.currentStart)); // sync mini highlight with main date
+
+            // draw separators after layout
+            setTimeout(drawWeekSeparators, 0);
           }}
           height="auto"
         />
