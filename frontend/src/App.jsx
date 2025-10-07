@@ -366,6 +366,7 @@ export default function App() {
             "/slide2.jpg",
             "/slide3.jpg",
             "/slide4.jpg",
+            "/slide5.jpg",
           ]}
           interval={6000}
         />
