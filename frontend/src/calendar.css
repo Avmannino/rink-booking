@@ -902,8 +902,18 @@ body {
   }
 
   /* Invisible placeholder to balance the grid */
-.mobileHeaderSpacer {
-  width: 48px;
-  height: 1px; /* keep it non-intrusive */
-}
+  .mobileHeaderSpacer {
+    width: 48px;
+    height: 1px;
+    /* keep it non-intrusive */
+  }
+    /* Mini month: color date numbers by availability (mobile only) */
+  .miniWrap .fc .hasAvail .fc-daygrid-day-number {
+    color: #22c55e !important; /* green */
+    font-weight: 800;
+  }
+  .miniWrap .fc .noAvail .fc-daygrid-day-number {
+    color: #ef4444 !important; /* red */
+    font-weight: 800;
+  }
 }
