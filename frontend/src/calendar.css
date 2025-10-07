@@ -178,7 +178,7 @@ html, body {                      /* clamp the page to viewport width */
 .viewRow {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: 8px;
+  margin-bottom: 7px;
 }
 .viewBtns { display: flex; gap: 18px; }
 .viewBtn {
