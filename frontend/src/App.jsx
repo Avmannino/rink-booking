@@ -247,12 +247,13 @@ export default function App() {
     }
   };
 
-  // Mini calendar click: desktop -> goto day view, mobile -> open inline day view
+  // Mini calendar click: desktop -> goto day view, mobile -> open ONLY the mobile day view
   const handleMiniDateClick = (arg) => {
     if (isMobile) {
       setMobileDayDate(arg.date);
-      setMobileDayOpen(true);
+      setMobileDayOpen(true);  // hide mobile mini, show mobile day view
       setSelectedMiniISO(toYMD(arg.date));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     const api = getApi();
@@ -344,84 +345,188 @@ export default function App() {
           <img src={LOGO_SRC} alt="Wings Arena" className="miniLogo" />
         </a>
 
-        {isMobile && <h1 className="title mobileTitle">Ice Reservation Availability</h1>}
+        {/* DESKTOP: always show mini calendar + carousel */}
+        {!isMobile && (
+          <>
+            <aside className="miniWrap">
+              <div className="miniHeaderBar">
+                <button
+                  className="miniHeaderBtn"
+                  type="button"
+                  onClick={() => {
+                    const miniApi = miniCalRef.current?.getApi();
+                    if (miniApi) {
+                      miniApi.prev();
+                      const title = miniApi.view.title;
+                      setMiniTitle(title);
+                    }
+                  }}
+                  aria-label="Previous month"
+                >
+                  ‹
+                </button>
 
-        <aside className="miniWrap">
-          <div className="miniHeaderBar">
-            <button
-              className="miniHeaderBtn"
-              type="button"
-              onClick={() => {
-                const miniApi = miniCalRef.current?.getApi();
-                if (miniApi) {
-                  miniApi.prev();
-                  const title = miniApi.view.title;
-                  setMiniTitle(title);
-                }
-              }}
-              aria-label="Previous month"
-            >
-              ‹
-            </button>
+                <div className="miniHeaderTitle">{miniTitle}</div>
 
-            <div className="miniHeaderTitle">{miniTitle}</div>
+                <button
+                  className="miniHeaderBtn"
+                  type="button"
+                  onClick={() => {
+                    const miniApi = miniCalRef.current?.getApi();
+                    if (miniApi) {
+                      miniApi.next();
+                      const title = miniApi.view.title;
+                      setMiniTitle(title);
+                    }
+                  }}
+                  aria-label="Next month"
+                >
+                  ›
+                </button>
+              </div>
 
-            <button
-              className="miniHeaderBtn"
-              type="button"
-              onClick={() => {
-                const miniApi = miniCalRef.current?.getApi();
-                if (miniApi) {
-                  miniApi.next();
-                  const title = miniApi.view.title;
-                  setMiniTitle(title);
-                }
-              }}
-              aria-label="Next month"
-            >
-              ›
-            </button>
-          </div>
+              <FullCalendar
+                ref={miniCalRef}
+                plugins={[dayGridPlugin, interactionPlugin]}
+                initialView="dayGridMonth"
+                headerToolbar={false}
+                dayHeaderFormat={{ weekday: 'narrow' }}
+                fixedWeekCount={false}
+                showNonCurrentDates={false}
+                expandRows={true}
+                height="auto"
+                contentHeight="auto"
+                dayCellClassNames={(arg) => {
+                  const classes = ['miniCell'];
+                  if (toYMD(arg.date) === selectedMiniISO) classes.push('miniSelected');
+                  return classes;
+                }}
+                dateClick={handleMiniDateClick}
+                initialDate={currentDate}
+                datesSet={(info) => {
+                  setMiniTitle(
+                    new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
+                      info.view.currentStart
+                    )
+                  );
+                }}
+              />
+            </aside>
 
-          <FullCalendar
-            ref={miniCalRef}
-            plugins={[dayGridPlugin, interactionPlugin]}
-            initialView="dayGridMonth"
-            headerToolbar={false}
-            dayHeaderFormat={{ weekday: 'narrow' }}
-            fixedWeekCount={false}
-            showNonCurrentDates={false}
-            expandRows={true}
-            height="auto"
-            contentHeight="auto"
-            dayCellClassNames={(arg) => {
-              const classes = ['miniCell'];
-              if (toYMD(arg.date) === selectedMiniISO) classes.push('miniSelected');
-              return classes;
-            }}
-            dateClick={handleMiniDateClick}
-            initialDate={currentDate}
-            datesSet={(info) => {
-              setMiniTitle(
-                new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
-                  info.view.currentStart
-                )
-              );
-            }}
-          />
-        </aside>
+            <Carousel
+              images={[
+                "/slide1.jpg",
+                "/slide2.jpg",
+                "/slide3.jpg",
+                "/slide4.jpg",
+                "/slide5.jpg",
+              ]}
+              interval={6000}
+            />
+          </>
+        )}
 
-        {/* MOBILE DAY VIEW (only on phones when a date is tapped) */}
+        {/* MOBILE: title + (either mini OR day view) + (optional carousel) */}
+        {isMobile && !mobileDayOpen && (
+          <>
+            <h1 className="title mobileTitle">Ice Reservation Availability</h1>
+            <aside className="miniWrap">
+              <div className="miniHeaderBar">
+                <button
+                  className="miniHeaderBtn"
+                  type="button"
+                  onClick={() => {
+                    const miniApi = miniCalRef.current?.getApi();
+                    if (miniApi) {
+                      miniApi.prev();
+                      const title = miniApi.view.title;
+                      setMiniTitle(title);
+                    }
+                  }}
+                  aria-label="Previous month"
+                >
+                  ‹
+                </button>
+
+                <div className="miniHeaderTitle">{miniTitle}</div>
+
+                <button
+                  className="miniHeaderBtn"
+                  type="button"
+                  onClick={() => {
+                    const miniApi = miniCalRef.current?.getApi();
+                    if (miniApi) {
+                      miniApi.next();
+                      const title = miniApi.view.title;
+                      setMiniTitle(title);
+                    }
+                  }}
+                  aria-label="Next month"
+                >
+                  ›
+                </button>
+              </div>
+
+              <FullCalendar
+                ref={miniCalRef}
+                plugins={[dayGridPlugin, interactionPlugin]}
+                initialView="dayGridMonth"
+                headerToolbar={false}
+                dayHeaderFormat={{ weekday: 'narrow' }}
+                fixedWeekCount={false}
+                showNonCurrentDates={false}
+                expandRows={true}
+                height="auto"
+                contentHeight="auto"
+                dayCellClassNames={(arg) => {
+                  const classes = ['miniCell'];
+                  if (toYMD(arg.date) === selectedMiniISO) classes.push('miniSelected');
+                  return classes;
+                }}
+                dateClick={handleMiniDateClick}
+                initialDate={currentDate}
+                datesSet={(info) => {
+                  setMiniTitle(
+                    new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
+                      info.view.currentStart
+                    )
+                  );
+                }}
+              />
+            </aside>
+
+            <Carousel
+              images={[
+                "/slide1.jpg",
+                "/slide2.jpg",
+                "/slide3.jpg",
+                "/slide4.jpg",
+                "/slide5.jpg",
+              ]}
+              interval={6000}
+            />
+          </>
+        )}
+
         {isMobile && mobileDayOpen && (
           <section className="mobileDayWrap">
             <div className="mobileDayHeader">
-              <button className="mobileBackBtn" onClick={() => setMobileDayOpen(false)} aria-label="Back">← Back</button>
+              <button className="mobileBackBtn" onClick={() => setMobileDayOpen(false)}>
+                ⮜ Back
+              </button>
+
               <div className="mobileDayTitle">
                 {new Intl.DateTimeFormat('en-US', {
-                  weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+                  month: 'long',
+                  day: 'numeric',
+                  year: 'numeric'
                 }).format(mobileDayDate)}
               </div>
+
+              {/* Empty spacer to balance the grid so the title stays centered */}
+              <span className="mobileHeaderSpacer" />
             </div>
+
 
             <FullCalendar
               key={toYMD(mobileDayDate)}
@@ -459,17 +564,6 @@ export default function App() {
             />
           </section>
         )}
-
-        <Carousel
-          images={[
-            "/slide1.jpg",
-            "/slide2.jpg",
-            "/slide3.jpg",
-            "/slide4.jpg",
-            "/slide5.jpg",
-          ]}
-          interval={6000}
-        />
       </div>
 
       {/* RIGHT: main calendar — hidden on mobile */}
