@@ -54,6 +54,9 @@ function toYMD(d) {
   const da = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${da}`;
 }
+const isTouchDevice = () =>
+  typeof window !== 'undefined' &&
+  ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
 export default function App() {
   const [events, setEvents] = useState([]);
@@ -72,6 +75,30 @@ export default function App() {
 
   const mainCalRef = useRef(null);
   const miniCalRef = useRef(null);
+
+  // ----- MOBILE state -----
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 980px)').matches : false
+  );
+  const [mobileDayOpen, setMobileDayOpen] = useState(false);
+  const [mobileDayDate, setMobileDayDate] = useState(new Date());
+  const mobileDayRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 980px)');
+    const onChange = (e) => setIsMobile(e.matches);
+    mq.addEventListener?.('change', onChange) || mq.addListener(onChange);
+    return () =>
+      (mq.removeEventListener?.('change', onChange) || mq.removeListener(onChange));
+  }, []);
+
+  // Keep mobile day calendar synced to selected date
+  useEffect(() => {
+    if (!isMobile || !mobileDayOpen) return;
+    const api = mobileDayRef.current?.getApi?.();
+    if (api) api.gotoDate(mobileDayDate);
+  }, [isMobile, mobileDayOpen, mobileDayDate]);
 
   // Map API -> FC events (keep all props like price_cents)
   const calendarEvents = useMemo(
@@ -111,8 +138,9 @@ export default function App() {
     return <div className="eventText">{text}</div>;
   };
 
-  // Hover tooltip (uses price_cents from API — not a rate) with fade in/out
+  // Hover tooltip (desktop only; fades in/out)
   const handleMouseEnter = (arg) => {
+    if (isTouchDevice()) return;
     arg.el.style.cursor = 'pointer';
     const start = arg.event.start;
     const end = arg.event.end;
@@ -122,21 +150,25 @@ export default function App() {
       arg.event.extendedProps && arg.event.extendedProps.price_cents
         ? arg.event.extendedProps.price_cents
         : 0;
-
     const tip = document.createElement('div');
     tip.className = 'slot-tooltip';
-    tip.style.position = 'fixed';
-    tip.style.zIndex = '99999';
-    tip.style.pointerEvents = 'none';
-    tip.style.background = '#0b1220';
-    tip.style.border = '1px solid #334155';
-    tip.style.borderRadius = '10px';
-    tip.style.boxShadow = '0 10px 26px rgba(0,0,0,0.35)';
-    tip.style.padding = '10px 12px';
-    tip.style.fontSize = '14px';
-    tip.style.color = '#e5e7eb';
-    tip.style.maxWidth = '300px';
-    tip.style.lineHeight = '1.55';
+    Object.assign(tip.style, {
+      position: 'fixed',
+      zIndex: '99999',
+      pointerEvents: 'none',
+      background: '#0b1220',
+      border: '1px solid #334155',
+      borderRadius: '10px',
+      boxShadow: '0 10px 26px rgba(0,0,0,0.35)',
+      padding: '10px 12px',
+      fontSize: '14px',
+      color: '#e5e7eb',
+      maxWidth: '300px',
+      lineHeight: '1.55',
+      opacity: '0',
+      transform: 'translateY(4px)',
+      transition: 'opacity 160ms ease, transform 160ms ease'
+    });
     tip.innerHTML = `
       <div style="font-weight:700; margin-bottom:4px; color:#f1f5f9">Available Ice</div>
       <div><strong>Date:</strong> ${fmtDate(start)}</div>
@@ -146,18 +178,13 @@ export default function App() {
     `;
     document.body.appendChild(tip);
 
-    // Fade IN (use CSS class toggle)
-    requestAnimationFrame(() => {
-      tip.classList.add('show');
-    });
-
     const move = (e) => {
       const offX = 12, offY = 12;
       const rect = tip.getBoundingClientRect();
       const vw = innerWidth, vh = innerHeight;
       let x = e.clientX + offX;
       let y = e.clientY - rect.height - offY;
-      if (y < 8) y = e.clientY + offY; // flip below
+      if (y < 8) y = e.clientY + offY;
       if (x + rect.width + 8 > vw) x = vw - rect.width - 8;
       if (y + rect.height + 8 > vh) y = vh - rect.height - 8;
       tip.style.left = `${x}px`;
@@ -165,30 +192,29 @@ export default function App() {
     };
     document.addEventListener('mousemove', move);
 
+    requestAnimationFrame(() => {
+      tip.style.opacity = '1';
+      tip.style.transform = 'translateY(0)';
+    });
+
     arg.el._slotTooltip = tip;
     arg.el._slotTooltipMove = move;
     if (arg.jsEvent) move(arg.jsEvent);
   };
-
   const handleMouseLeave = (arg) => {
+    if (isTouchDevice()) return;
     arg.el.style.cursor = '';
     const tip = arg.el._slotTooltip;
-    if (tip) {
-      // Fade OUT then remove
-      tip.classList.remove('show');
-
-      const cleanup = () => {
-        tip.removeEventListener('transitionend', cleanup);
-        if (tip.parentNode) tip.parentNode.removeChild(tip);
-      };
-      tip.addEventListener('transitionend', cleanup);
-      // Fallback in case transitionend doesn't fire
-      setTimeout(cleanup, 250);
-      delete arg.el._slotTooltip;
-    }
-    if (arg.el._slotTooltipMove) {
-      document.removeEventListener('mousemove', arg.el._slotTooltipMove);
+    const move = arg.el._slotTooltipMove;
+    if (move) {
+      document.removeEventListener('mousemove', move);
       delete arg.el._slotTooltipMove;
+    }
+    if (tip) {
+      tip.style.opacity = '0';
+      tip.style.transform = 'translateY(4px)';
+      setTimeout(() => tip.remove(), 170);
+      delete arg.el._slotTooltip;
     }
   };
 
@@ -221,8 +247,14 @@ export default function App() {
     }
   };
 
-  // Mini calendar -> jump main date AND show Day view + highlight
+  // Mini calendar click: desktop -> goto day view, mobile -> open inline day view
   const handleMiniDateClick = (arg) => {
+    if (isMobile) {
+      setMobileDayDate(arg.date);
+      setMobileDayOpen(true);
+      setSelectedMiniISO(toYMD(arg.date));
+      return;
+    }
     const api = getApi();
     if (api) {
       api.gotoDate(arg.date);
@@ -234,7 +266,7 @@ export default function App() {
     }
   };
 
-  // --------- STATIC Additional Info content (edit these strings/JSX) ----------
+  // --------- STATIC Additional Info content ----------
   const additionalInfoSections = [
     {
       id: 'policies',
@@ -266,7 +298,7 @@ export default function App() {
       content: (
         <div>
           <p>
-            Skate rentals available on site. The first 15 rentals are Free! Additional rentals are $2/each.
+            Skate rentals available on site. The first 15 rentals are free; additional rentals are $2 each.
           </p>
         </div>
       ),
@@ -296,7 +328,7 @@ export default function App() {
       ),
     },
   ];
-  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------
 
   return (
     <div className="pageWrap">
@@ -311,6 +343,8 @@ export default function App() {
         >
           <img src={LOGO_SRC} alt="Wings Arena" className="miniLogo" />
         </a>
+
+        {isMobile && <h1 className="title mobileTitle">Ice Reservation Availability</h1>}
 
         <aside className="miniWrap">
           <div className="miniHeaderBar">
@@ -377,6 +411,55 @@ export default function App() {
           />
         </aside>
 
+        {/* MOBILE DAY VIEW (only on phones when a date is tapped) */}
+        {isMobile && mobileDayOpen && (
+          <section className="mobileDayWrap">
+            <div className="mobileDayHeader">
+              <button className="mobileBackBtn" onClick={() => setMobileDayOpen(false)} aria-label="Back">← Back</button>
+              <div className="mobileDayTitle">
+                {new Intl.DateTimeFormat('en-US', {
+                  weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+                }).format(mobileDayDate)}
+              </div>
+            </div>
+
+            <FullCalendar
+              key={toYMD(mobileDayDate)}
+              ref={mobileDayRef}
+              plugins={[timeGridPlugin, interactionPlugin]}
+              initialView="timeGridDay"
+              headerToolbar={false}
+              timeZone="local"
+              allDaySlot={false}
+              slotMinTime="06:00:00"
+              slotMaxTime="22:00:00"
+              slotDuration="00:30:00"
+              slotLabelInterval="01:00"
+              height="auto"
+              contentHeight={560}
+              expandRows={true}
+              initialDate={mobileDayDate}
+              events={calendarEvents}
+              eventClick={handleEventClick}
+              eventContent={renderEventContent}
+              eventDidMount={(arg) => {
+                const el = arg.el;
+                el.style.background = '#d6001d7a';
+                el.style.border = '1px solid #ffffff95';
+                el.style.color = '#e5e7eb';
+                el.style.borderRadius = '6px';
+                el.style.boxShadow = '0 6px 16px rgba(0,0,0,0.35)';
+                el.style.transform = 'scaleX(0.92)';
+                el.style.transformOrigin = 'center';
+              }}
+              datesSet={(info) => {
+                setCurrentDate(info.view.currentStart);
+                setSelectedMiniISO(toYMD(info.view.currentStart));
+              }}
+            />
+          </section>
+        )}
+
         <Carousel
           images={[
             "/slide1.jpg",
@@ -389,107 +472,108 @@ export default function App() {
         />
       </div>
 
-      {/* RIGHT: main calendar */}
-      <main className="mainWrap">
-        {/* Trigger placed in header area — style/position via your CSS */}
-        <AdditionalInfo sections={additionalInfoSections} triggerText="*Additional Info*" />
+      {/* RIGHT: main calendar — hidden on mobile */}
+      {!isMobile && (
+        <main className="mainWrap">
+          <AdditionalInfo sections={additionalInfoSections} triggerText="*Additional Info*" />
+          <h1 className="title">Ice Reservation Availability</h1>
 
-        <h1 className="title">Ice Reservation Availability</h1>
-
-        <div className="centerNav">
-          <button className="navBtn" onClick={goPrev} aria-label="Previous">
-            ‹
-          </button>
-          <div className="currentMonth">
-            {calTitle ||
-              new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
-                currentDate
-              )}
-          </div>
-          <button className="navBtn" onClick={goNext} aria-label="Next">
-            ›
-          </button>
-        </div>
-
-        <div className="viewRow">
-          <div className="viewBtns">
-            <button
-              className={'viewBtn ' + (currentView === 'dayGridMonth' ? 'active' : '')}
-              onClick={() => switchView('dayGridMonth')}
-            >
-              Month
+          <div className="centerNav">
+            <button className="navBtn" onClick={goPrev} aria-label="Previous">
+              ‹
             </button>
-            <button
-              className={'viewBtn ' + (currentView === 'timeGridWeek' ? 'active' : '')}
-              onClick={() => switchView('timeGridWeek')}
-            >
-              Week
-            </button>
-            <button
-              className={'viewBtn ' + (currentView === 'timeGridDay' ? 'active' : '')}
-              onClick={() => switchView('timeGridDay')}
-            >
-              Day
+            <div className="currentMonth">
+              {calTitle ||
+                new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
+                  currentDate
+                )}
+            </div>
+            <button className="navBtn" onClick={goNext} aria-label="Next">
+              ›
             </button>
           </div>
-        </div>
 
-        {loading && <p className="loading">Loading availability…</p>}
+          <div className="viewRow">
+            <div className="viewBtns">
+              <button
+                className={'viewBtn ' + (currentView === 'dayGridMonth' ? 'active' : '')}
+                onClick={() => switchView('dayGridMonth')}
+              >
+                Month
+              </button>
+              <button
+                className={'viewBtn ' + (currentView === 'timeGridWeek' ? 'active' : '')}
+                onClick={() => switchView('timeGridWeek')}
+              >
+                Week
+              </button>
+              <button
+                className={'viewBtn ' + (currentView === 'timeGridDay' ? 'active' : '')}
+                onClick={() => switchView('timeGridDay')}
+              >
+                Day
+              </button>
+            </div>
+          </div>
 
-        <FullCalendar
-          ref={mainCalRef}
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          headerToolbar={false}
-          initialView={currentView}
-          timeZone="local"
-          allDaySlot={false}
-          slotMinTime="06:00:00"
-          slotMaxTime="22:00:00"
-          slotDuration="00:30:00"
-          slotLabelInterval="01:00"
-          nowIndicator={true}
-          contentHeight={620}
-          expandRows={true}
-          events={calendarEvents}
-          eventClick={handleEventClick}
-          eventContent={renderEventContent}
-          eventDidMount={(arg) => {
-            const el = arg.el;
-            el.style.background = '#d6001d7a';
-            el.style.border = '1px solid #ffffff95';
-            el.style.color = '#e5e7eb';
-            el.style.borderRadius = '6px';
-            el.style.boxShadow = '0 6px 16px rgba(0,0,0,0.35)';
-            el.style.cursor = 'pointer';
-            el.style.transform = 'scaleX(0.80)';
-            el.style.transformOrigin = 'center';
-          }}
-          eventMouseEnter={handleMouseEnter}
-          eventMouseLeave={handleMouseLeave}
-          datesSet={(info) => {
-            setCalTitle(info.view.title);
-            setCurrentView(info.view.type);
-            setCurrentDate(info.view.currentStart);
-            setSelectedMiniISO(toYMD(info.view.currentStart));
-          }}
-          height="auto"
-        />
+          {loading && <p className="loading">Loading availability…</p>}
 
-        {selected && (
-          <BookingModal
-            slot={selected}
-            onClose={() => setSelected(null)}
-            onCheckout={async (payload) => {
-              try {
-                const res = await axios.post(`${API_BASE}/api/create-checkout-session`, payload);
-                window.location.href = res.data.url;
-              } catch (e) {
-                alert(e.response?.data?.error || 'Failed to start checkout');
-              }
+          <FullCalendar
+            ref={mainCalRef}
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+            headerToolbar={false}
+            initialView={currentView}
+            timeZone="local"
+            allDaySlot={false}
+            slotMinTime="06:00:00"
+            slotMaxTime="22:00:00"
+            slotDuration="00:30:00"
+            slotLabelInterval="01:00"
+            nowIndicator={true}
+            contentHeight={620}
+            expandRows={true}
+            events={calendarEvents}
+            eventClick={handleEventClick}
+            eventContent={renderEventContent}
+            eventDidMount={(arg) => {
+              const el = arg.el;
+              el.style.background = '#d6001d7a';
+              el.style.border = '1px solid #ffffff95';
+              el.style.color = '#e5e7eb';
+              el.style.borderRadius = '6px';
+              el.style.boxShadow = '0 6px 16px rgba(0,0,0,0.35)';
+              el.style.cursor = 'pointer';
+              el.style.transform = 'scaleX(0.80)';
+              el.style.transformOrigin = 'center';
             }}
+            eventMouseEnter={handleMouseEnter}
+            eventMouseLeave={handleMouseLeave}
+            datesSet={(info) => {
+              setCalTitle(info.view.title);
+              setCurrentView(info.view.type);
+              setCurrentDate(info.view.currentStart);
+              setSelectedMiniISO(toYMD(info.view.currentStart));
+            }}
+            height="auto"
           />
-        )}
-      </main>
+        </main>
+      )}
+
+      {/* Booking modal rendered for BOTH desktop and mobile */}
+      {selected && (
+        <BookingModal
+          slot={selected}
+          onClose={() => setSelected(null)}
+          onCheckout={async (payload) => {
+            try {
+              const res = await axios.post(`${API_BASE}/api/create-checkout-session`, payload);
+              window.location.href = res.data.url;
+            } catch (e) {
+              alert(e.response?.data?.error || 'Failed to start checkout');
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
