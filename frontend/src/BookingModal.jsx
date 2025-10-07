@@ -5,6 +5,8 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [purpose, setPurpose] = useState('Birthday Party');
+  const [otherPurpose, setOtherPurpose] = useState('');   // shown when Purpose = Other
+  const [groupSize, setGroupSize] = useState('');         // required
 
   const start = new Date(slot.start);
   const end = new Date(slot.end);
@@ -89,6 +91,15 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+
+    // If "Other" is selected, require non-empty custom purpose
+    const finalPurpose = purpose === 'Other' ? otherPurpose.trim() : purpose;
+    if (!finalPurpose) {
+      // simple guard — browser will generally enforce required on the input too
+      alert('Please enter your purpose.');
+      return;
+    }
+
     onCheckout({
       slotId: slot.id,
       start: start.toISOString(),
@@ -96,7 +107,8 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
       name,
       email,
       phone,
-      purpose,
+      purpose: finalPurpose,
+      groupSize: Number(groupSize),
     });
   };
 
@@ -110,7 +122,6 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
         </p>
         <p style={{ marginTop: 0, marginBottom: 16, color: '#CBD5E1' }}>
           <strong>Price:</strong> {fmtUSD(priceCents)}
-          {/* No hourly rate shown, per your request */}
         </p>
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 12 }}>
@@ -151,6 +162,7 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
             />
           </label>
 
+          {/* Purpose + conditional "Other" text box */}
           <label style={styles.label}>
             Purpose
             <select
@@ -162,7 +174,37 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
               <option>Private Event</option>
               <option>Team Practice</option>
               <option>Open Ice with Friends</option>
+              <option>Other</option>
             </select>
+          </label>
+
+          {purpose === 'Other' && (
+            <label style={styles.label}>
+              Please describe your purpose
+              <input
+                value={otherPurpose}
+                onChange={(e) => setOtherPurpose(e.target.value)}
+                required
+                style={styles.input}
+                placeholder="Describe your event..."
+              />
+            </label>
+          )}
+
+          {/* REQUIRED: Estimated group/party size */}
+          <label style={styles.label}>
+            Estimated Group/Party Size
+            <input
+              type="number"
+              inputMode="numeric"
+              min="1"
+              step="1"
+              value={groupSize}
+              onChange={(e) => setGroupSize(e.target.value)}
+              required
+              style={styles.input}
+              placeholder="e.g., 12"
+            />
           </label>
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
@@ -184,7 +226,7 @@ const styles = {
   },
   modal: {
     width: '100%', maxWidth: 520,
-    background: '#0f172a',                 // darker modal for your theme
+    background: '#0f172a',
     border: '1px solid #1f2a44',
     borderRadius: 12,
     padding: 20,

@@ -6,6 +6,7 @@ import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import BookingModal from './BookingModal';
 import Carousel from "./Carousel";
+import AdditionalInfo from './AdditionalInfo';
 
 import './calendar.css'; // dark theme, layout, row heights, mini-cal styling
 
@@ -54,42 +55,6 @@ function toYMD(d) {
   return `${y}-${m}-${da}`;
 }
 
-/* ============================
-   Full-height vertical separators
-   ============================ */
-function drawWeekSeparators() {
-  // time-grid scroller/slots area
-  const slots = document.querySelector('.mainWrap .fc .fc-timegrid .fc-timegrid-slots');
-  const cols = document.querySelectorAll('.mainWrap .fc .fc-timegrid .fc-timegrid-col');
-  if (!slots || !cols.length) return;
-
-  // ensure host is positioned
-  slots.style.position = 'relative';
-
-  // remove old lines
-  slots.querySelectorAll('.fc-sep-line').forEach((el) => el.remove());
-
-  const baseRect = slots.getBoundingClientRect();
-
-  cols.forEach((col, i) => {
-    if (i === cols.length - 1) return; // no line after last day
-    const rect = col.getBoundingClientRect();
-    const x = rect.right - baseRect.left;
-
-    const line = document.createElement('div');
-    line.className = 'fc-sep-line';
-    line.style.position = 'absolute';
-    line.style.top = '0';
-    line.style.bottom = '0';
-    line.style.left = `${Math.round(x)}px`;
-    line.style.width = '1px';
-    line.style.background = '#2a3658';
-    line.style.pointerEvents = 'none';
-    line.style.zIndex = '50';
-    slots.appendChild(line);
-  });
-}
-
 export default function App() {
   const [events, setEvents] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -130,17 +95,6 @@ export default function App() {
         setLoading(false);
       }
     })();
-  }, []);
-
-  // keep separators in sync with resizes/first paint
-  useEffect(() => {
-    const r = requestAnimationFrame(drawWeekSeparators);
-    const onResize = () => drawWeekSeparators();
-    window.addEventListener('resize', onResize);
-    return () => {
-      cancelAnimationFrame(r);
-      window.removeEventListener('resize', onResize);
-    };
   }, []);
 
   const handleEventClick = (info) => {
@@ -192,12 +146,9 @@ export default function App() {
     document.body.appendChild(tip);
 
     const move = (e) => {
-      const offX = 12,
-        offY = 12;
+      const offX = 12, offY = 12;
       const rect = tip.getBoundingClientRect();
-      const vw = innerWidth,
-        vh = innerHeight;
-      // default above-right
+      const vw = innerWidth, vh = innerHeight;
       let x = e.clientX + offX;
       let y = e.clientY - rect.height - offY;
       if (y < 8) y = e.clientY + offY; // flip below
@@ -233,8 +184,7 @@ export default function App() {
       api.prev();
       const d = api.getDate();
       setCurrentDate(d);
-      setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
-      setTimeout(drawWeekSeparators, 0);
+      setSelectedMiniISO(toYMD(d));
     }
   };
   const goNext = () => {
@@ -243,8 +193,7 @@ export default function App() {
       api.next();
       const d = api.getDate();
       setCurrentDate(d);
-      setSelectedMiniISO(toYMD(d)); // keep mini highlight in sync when navigating
-      setTimeout(drawWeekSeparators, 0);
+      setSelectedMiniISO(toYMD(d));
     }
   };
   const switchView = (viewName) => {
@@ -252,7 +201,6 @@ export default function App() {
     const api = getApi();
     if (api) {
       api.changeView(viewName);
-      setTimeout(drawWeekSeparators, 0);
     }
   };
 
@@ -261,18 +209,81 @@ export default function App() {
     const api = getApi();
     if (api) {
       api.gotoDate(arg.date);
-      api.changeView('timeGridDay'); // switch to Day view
+      api.changeView('timeGridDay');
       setCurrentView('timeGridDay');
       setCurrentDate(arg.date);
-      setSelectedMiniISO(toYMD(arg.date)); // highlight this mini cell
+      setSelectedMiniISO(toYMD(arg.date));
       setCalTitle(api.view.title);
-      setTimeout(drawWeekSeparators, 0);
     }
   };
 
+  // --------- STATIC Additional Info content (edit these strings/JSX) ----------
+  const additionalInfoSections = [
+    {
+      id: 'policies',
+      title: 'Arena Policies',
+      content: (
+        <div>
+          <p>
+            Helmets required for all skaters under 18. No outside food in bench area.
+            Please arrive 15 minutes early for check-in.
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: 'cancellations',
+      title: 'Cancellations & Refunds',
+      content: (
+        <div>
+          <p>
+            Cancellations must be received 48 hours prior to booking start time
+            for a full refund. Inside 48 hours, fees are non-refundable.
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: 'equipment',
+      title: 'Equipment & Rentals',
+      content: (
+        <div>
+          <p>
+            Skate rentals available on site. The first 15 rentals are Free! Additional rentals are $2/each.
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: 'parking',
+      title: 'Parking & Entry',
+      content: (
+        <div>
+          <p>
+            Free parking on the south lot. Use the main entrance; the desk is
+            immediately to your right for wristbands and waivers.
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: 'contact',
+      title: 'Contact & Support',
+      content: (
+        <div>
+          <p>
+            Questions? Call (555) 555-0123 or email support@wingsarena.com.
+            Front desk staffed 7am–10pm daily.
+          </p>
+        </div>
+      ),
+    },
+  ];
+  // ---------------------------------------------------------------------------
+
   return (
     <div className="pageWrap">
-      {/* LEFT column: logo ABOVE the mini calendar container */}
+      {/* LEFT column */}
       <div className="leftCol">
         <a
           href="https://www.wingsarena.com"
@@ -285,7 +296,6 @@ export default function App() {
         </a>
 
         <aside className="miniWrap">
-          {/* mini calendar header with centered title and nav arrows */}
           <div className="miniHeaderBar">
             <button
               className="miniHeaderBtn"
@@ -327,9 +337,7 @@ export default function App() {
             plugins={[dayGridPlugin, interactionPlugin]}
             initialView="dayGridMonth"
             headerToolbar={false}
-            dayHeaderFormat={{ weekday: 'narrow' }} // one-letter weekday headers
-
-            /* show only current month's days */
+            dayHeaderFormat={{ weekday: 'narrow' }}
             fixedWeekCount={false}
             showNonCurrentDates={false}
             expandRows={true}
@@ -351,6 +359,7 @@ export default function App() {
             }}
           />
         </aside>
+
         <Carousel
           images={[
             "/slide1.jpg",
@@ -364,9 +373,11 @@ export default function App() {
 
       {/* RIGHT: main calendar */}
       <main className="mainWrap">
+        {/* Trigger placed in header area — style/position via your CSS */}
+        <AdditionalInfo sections={additionalInfoSections} triggerText="Additional Info" />
+
         <h1 className="title">Ice Reservation Availability</h1>
 
-        {/* centered arrows under the title */}
         <div className="centerNav">
           <button className="navBtn" onClick={goPrev} aria-label="Previous">
             ‹
@@ -382,7 +393,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* right-aligned view buttons */}
         <div className="viewRow">
           <div className="viewBtns">
             <button
@@ -420,20 +430,20 @@ export default function App() {
           slotDuration="00:30:00"
           slotLabelInterval="01:00"
           nowIndicator={true}
-          contentHeight={900}
+          contentHeight={620}
           expandRows={true}
           events={calendarEvents}
           eventClick={handleEventClick}
           eventContent={renderEventContent}
           eventDidMount={(arg) => {
             const el = arg.el;
-            el.style.background = '#d60035ff';
-            el.style.border = '1px solid #ffffffff';
+            el.style.background = '#d6001d7a';
+            el.style.border = '1px solid #ffffff95';
             el.style.color = '#e5e7eb';
             el.style.borderRadius = '6px';
             el.style.boxShadow = '0 6px 16px rgba(0,0,0,0.35)';
             el.style.cursor = 'pointer';
-            el.style.transform = 'scaleX(0.92)';
+            el.style.transform = 'scaleX(0.80)';
             el.style.transformOrigin = 'center';
           }}
           eventMouseEnter={handleMouseEnter}
@@ -442,10 +452,7 @@ export default function App() {
             setCalTitle(info.view.title);
             setCurrentView(info.view.type);
             setCurrentDate(info.view.currentStart);
-            setSelectedMiniISO(toYMD(info.view.currentStart)); // sync mini highlight with main date
-
-            // draw separators after layout
-            setTimeout(drawWeekSeparators, 0);
+            setSelectedMiniISO(toYMD(info.view.currentStart));
           }}
           height="auto"
         />
