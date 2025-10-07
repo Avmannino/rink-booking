@@ -111,7 +111,7 @@ export default function App() {
     return <div className="eventText">{text}</div>;
   };
 
-  // Hover tooltip (uses price_cents from API — not a rate)
+  // Hover tooltip (uses price_cents from API — not a rate) with fade in/out
   const handleMouseEnter = (arg) => {
     arg.el.style.cursor = 'pointer';
     const start = arg.event.start;
@@ -122,6 +122,7 @@ export default function App() {
       arg.event.extendedProps && arg.event.extendedProps.price_cents
         ? arg.event.extendedProps.price_cents
         : 0;
+
     const tip = document.createElement('div');
     tip.className = 'slot-tooltip';
     tip.style.position = 'fixed';
@@ -145,6 +146,11 @@ export default function App() {
     `;
     document.body.appendChild(tip);
 
+    // Fade IN (use CSS class toggle)
+    requestAnimationFrame(() => {
+      tip.classList.add('show');
+    });
+
     const move = (e) => {
       const offX = 12, offY = 12;
       const rect = tip.getBoundingClientRect();
@@ -163,10 +169,21 @@ export default function App() {
     arg.el._slotTooltipMove = move;
     if (arg.jsEvent) move(arg.jsEvent);
   };
+
   const handleMouseLeave = (arg) => {
     arg.el.style.cursor = '';
-    if (arg.el._slotTooltip) {
-      arg.el._slotTooltip.remove();
+    const tip = arg.el._slotTooltip;
+    if (tip) {
+      // Fade OUT then remove
+      tip.classList.remove('show');
+
+      const cleanup = () => {
+        tip.removeEventListener('transitionend', cleanup);
+        if (tip.parentNode) tip.parentNode.removeChild(tip);
+      };
+      tip.addEventListener('transitionend', cleanup);
+      // Fallback in case transitionend doesn't fire
+      setTimeout(cleanup, 250);
       delete arg.el._slotTooltip;
     }
     if (arg.el._slotTooltipMove) {
@@ -375,7 +392,7 @@ export default function App() {
       {/* RIGHT: main calendar */}
       <main className="mainWrap">
         {/* Trigger placed in header area — style/position via your CSS */}
-        <AdditionalInfo sections={additionalInfoSections} triggerText="Additional Info" />
+        <AdditionalInfo sections={additionalInfoSections} triggerText="*Additional Info*" />
 
         <h1 className="title">Ice Reservation Availability</h1>
 

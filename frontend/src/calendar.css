@@ -84,6 +84,7 @@ html, body { width: 100%; overflow-x: hidden; }
   padding: 16px 36px 22px 16px;  /* extra right padding so border is visible */
   box-sizing: border-box;
   overflow-x: clip;        /* avoid accidental X-scroll */
+  position: relative;      /* for AdditionalInfo trigger */
 }
 
 /* ===== Heading + centered arrows ===== */
@@ -167,7 +168,6 @@ html, body { width: 100%; overflow-x: hidden; }
   box-shadow: none;                     /* no line after the last column */
 }
 
-/* compressed 30-min rows for shorter calendar */
 /* ===== TimeGrid row sizing & line colors (Week/Day) ===== */
 .mainWrap .fc .fc-timegrid-slot {
   height: 28px !important;
@@ -188,7 +188,6 @@ html, body { width: 100%; overflow-x: hidden; }
 .mainWrap .fc .fc-timegrid-slot:not(.fc-timegrid-slot-minor) {
   border-top-color: #2a3b5f !important;     /* lighter full-hour line */
 }
-
 
 /* Month grid look */
 .mainWrap .fc .fc-daygrid-day-frame { min-height: 120px; }
@@ -226,8 +225,17 @@ html, body { width: 100%; overflow-x: hidden; }
   background: rgba(96, 165, 250, 0.08);
 }
 
-/* Tooltips (JS sets core styles; radius for Safari) */
-.slot-tooltip { border-radius: 10px; }
+/* ===== Tooltip animation ===== */
+.slot-tooltip {
+  border-radius: 10px;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.slot-tooltip.show {
+  opacity: 1;
+  transform: translateY(0);
+}
 
 /* Optional nicer scrollbars */
 * { scrollbar-width: thin; scrollbar-color: #334155 #0b1220; }
@@ -257,22 +265,16 @@ html, body { width: 100%; overflow-x: hidden; }
 .carouselDots .dot { width: 9px; height: 9px; border-radius: 999px; border: 1px solid #94a3b8; background: transparent; cursor: pointer; }
 .carouselDots .dot.active { background: #94a3b8; }
 
-
 /* Ensure we can absolutely-position the trigger inside the header area */
-.mainWrap {
-  position: relative; /* add this if not present */
-}
-
-/* Left-side trigger text in the main calendar header area */
 .additionalInfoTrigger {
   position: absolute;
-  left: 14px;                 /* adjust to taste */
-  top: 12px;                  /* sits near your title row */
+  left: 25px;
+  top: 110px;
   background: transparent;
   border: 0;
   color: #93c5fd;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 20px;
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 6px;
@@ -281,7 +283,7 @@ html, body { width: 100%; overflow-x: hidden; }
   background: rgba(147, 197, 253, 0.12);
 }
 
-/* Modal/backdrop */
+/* Modal/backdrop for AdditionalInfo */
 .ai-backdrop {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.5);
@@ -319,7 +321,7 @@ html, body { width: 100%; overflow-x: hidden; }
   overflow: clip;
 }
 .ai-accordionSummary {
-  list-style: none;           /* hide default marker */
+  list-style: none;
   display: flex; align-items: center; justify-content: space-between;
   gap: 10px;
   padding: 12px 14px;
@@ -342,17 +344,6 @@ html, body { width: 100%; overflow-x: hidden; }
   border-top: 1px solid #1f2a44;
   background: #0f172a;
 }
-.ai-textarea {
-  width: 100%;
-  min-height: 120px;
-  padding: 10px 12px;
-  background: #0b1220;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  color: #e5e7eb;
-  outline: none;
-  resize: vertical;
-}
 
 /* Modal actions */
 .ai-actions {
@@ -369,7 +360,6 @@ html, body { width: 100%; overflow-x: hidden; }
 
 /* Remove default triangles from <summary> */
 .ai-accordionItem summary::-webkit-details-marker { display: none; }
-
 
 /* ====== RESPONSIVE BREAKPOINTS ====== */
 @media (max-width: 1400px) {
