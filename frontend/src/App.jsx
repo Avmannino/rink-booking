@@ -8,12 +8,14 @@ import BookingModal from './BookingModal';
 import Carousel from "./Carousel";
 import AdditionalInfo from './AdditionalInfo';
 
-import './calendar.css'; // theme, layout, responsive, etc.
+import './calendar.css'; // dark theme, layout, row heights, mini-cal styling
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
+
+// If you place your logo at frontend/public/logo.png it will be served from /logo.png
 const LOGO_SRC = '/logo.png';
 
-// ---- helpers ----
+// --- small format helpers ---
 function fmtDuration(ms) {
   const totalMin = Math.round(ms / 60000);
   const h = Math.floor(totalMin / 60);
@@ -45,12 +47,15 @@ function fmtUSD(n) {
     minimumFractionDigits: 2
   });
 }
+// YYYY-MM-DD in local time (avoids UTC shifts)
 function toYMD(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const da = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${da}`;
 }
+
+// Use feature detection for hover (works on touch-capable laptops too)
 const canHover = () =>
   typeof window !== 'undefined' &&
   window.matchMedia &&
@@ -108,7 +113,6 @@ export default function App() {
     [events]
   );
 
-  // Load slots
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -123,34 +127,12 @@ export default function App() {
     })();
   }, []);
 
-  // === MOBILE availability coloring: build a set of YYYY-MM-DDs with at least one slot ===
-  const availableDays = useMemo(() => {
-    const set = new Set();
-    for (const ev of events) {
-      if (!ev?.start) continue;
-      const d = new Date(ev.start);
-      set.add(toYMD(d));
-    }
-    return set;
-  }, [events]);
-
-  // Mini calendar day cell classes (mobile-only colors)
-  const getMiniCellClasses = (date) => {
-    const ymd = toYMD(date);
-    const classes = ['miniCell'];
-    if (ymd === selectedMiniISO) classes.push('miniSelected');
-    if (isMobile) {
-      classes.push(availableDays.has(ymd) ? 'hasAvail' : 'noAvail');
-    }
-    return classes;
-  };
-
   const handleEventClick = (info) => {
     const slot = events.find((e) => e.id === info.event.id);
     if (slot) setSelected(slot);
   };
 
-  // label for events
+  // Unified event label
   const renderEventContent = (arg) => {
     const start = arg.event.start;
     const end = arg.event.end;
@@ -159,9 +141,9 @@ export default function App() {
     return <div className="eventText">{text}</div>;
   };
 
-  // Hover tooltip (desktop only; fade in/out)
+  // Hover tooltip (desktop only; fades in/out)
   const handleMouseEnter = (arg) => {
-    if (!canHover()) return;
+    if (!canHover()) return; // allow hover on real-hover devices only
     arg.el.style.cursor = 'pointer';
     const start = arg.event.start;
     const end = arg.event.end;
@@ -205,7 +187,7 @@ export default function App() {
       const vw = innerWidth, vh = innerHeight;
       let x = e.clientX + offX;
       let y = e.clientY - rect.height - offY;
-      if (y < 8) y = e.clientY + offY;
+      if (y < 8) y = e.clientY + offY; // flip below
       if (x + rect.width + 8 > vw) x = vw - rect.width - 8;
       if (y + rect.height + 8 > vh) y = vh - rect.height - 8;
       tip.style.left = `${x}px`;
@@ -222,6 +204,7 @@ export default function App() {
     arg.el._slotTooltipMove = move;
     if (arg.jsEvent) move(arg.jsEvent);
   };
+
   const handleMouseLeave = (arg) => {
     if (!canHover()) return;
     arg.el.style.cursor = '';
@@ -234,7 +217,11 @@ export default function App() {
     if (tip) {
       tip.style.opacity = '0';
       tip.style.transform = 'translateY(4px)';
-      setTimeout(() => tip.remove(), 180);
+      // remove after transition ends
+      const cleanup = () => tip.remove();
+      tip.addEventListener('transitionend', cleanup, { once: true });
+      // safety timeout in case transitionend doesn't fire
+      setTimeout(cleanup, 220);
       delete arg.el._slotTooltip;
     }
   };
@@ -268,13 +255,11 @@ export default function App() {
     }
   };
 
-  // Mini calendar click:
-  // desktop -> goto day view on main calendar
-  // mobile  -> hide mini and show mobile day view
+  // Mini calendar click: desktop -> goto day view, mobile -> open ONLY the mobile day view
   const handleMiniDateClick = (arg) => {
     if (isMobile) {
       setMobileDayDate(arg.date);
-      setMobileDayOpen(true);
+      setMobileDayOpen(true);  // hide mobile mini, show mobile day view
       setSelectedMiniISO(toYMD(arg.date));
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
@@ -290,7 +275,7 @@ export default function App() {
     }
   };
 
-  // --------- STATIC Additional Info content (edit these) ----------
+  // --------- STATIC Additional Info content ----------
   const additionalInfoSections = [
     {
       id: 'policies',
@@ -352,7 +337,7 @@ export default function App() {
       ),
     },
   ];
-  // ---------------------------------------------------------------
+  // ---------------------------------------------------
 
   return (
     <div className="pageWrap">
@@ -368,7 +353,7 @@ export default function App() {
           <img src={LOGO_SRC} alt="Wings Arena" className="miniLogo" />
         </a>
 
-        {/* DESKTOP: mini calendar + carousel */}
+        {/* DESKTOP: always show mini calendar + carousel */}
         {!isMobile && (
           <>
             <aside className="miniWrap">
@@ -419,7 +404,11 @@ export default function App() {
                 expandRows={true}
                 height="auto"
                 contentHeight="auto"
-                dayCellClassNames={(arg) => getMiniCellClasses(arg.date)}
+                dayCellClassNames={(arg) => {
+                  const classes = ['miniCell'];
+                  if (toYMD(arg.date) === selectedMiniISO) classes.push('miniSelected');
+                  return classes;
+                }}
                 dateClick={handleMiniDateClick}
                 initialDate={currentDate}
                 datesSet={(info) => {
@@ -445,7 +434,7 @@ export default function App() {
           </>
         )}
 
-        {/* MOBILE: either mini OR day view */}
+        {/* MOBILE: title + (either mini OR day view) + (optional carousel) */}
         {isMobile && !mobileDayOpen && (
           <>
             <h1 className="title mobileTitle">Ice Reservation Availability</h1>
@@ -497,7 +486,11 @@ export default function App() {
                 expandRows={true}
                 height="auto"
                 contentHeight="auto"
-                dayCellClassNames={(arg) => getMiniCellClasses(arg.date)}
+                dayCellClassNames={(arg) => {
+                  const classes = ['miniCell'];
+                  if (toYMD(arg.date) === selectedMiniISO) classes.push('miniSelected');
+                  return classes;
+                }}
                 dateClick={handleMiniDateClick}
                 initialDate={currentDate}
                 datesSet={(info) => {
@@ -509,7 +502,7 @@ export default function App() {
                 }}
               />
             </aside>
-            {/* (Optional) keep or hide the carousel on mobile */}
+
             <Carousel
               images={[
                 "/slide1.jpg",
@@ -529,6 +522,7 @@ export default function App() {
               <button className="mobileBackBtn" onClick={() => setMobileDayOpen(false)}>
                 ⮜ Back
               </button>
+
               <div className="mobileDayTitle">
                 {new Intl.DateTimeFormat('en-US', {
                   month: 'long',
@@ -536,6 +530,8 @@ export default function App() {
                   year: 'numeric'
                 }).format(mobileDayDate)}
               </div>
+
+              {/* Empty spacer to balance the grid so the title stays centered */}
               <span className="mobileHeaderSpacer" />
             </div>
 
@@ -556,7 +552,7 @@ export default function App() {
               expandRows={true}
               initialDate={mobileDayDate}
               events={calendarEvents}
-              eventClick={handleEventClick}   // mobile tap opens BookingModal
+              eventClick={handleEventClick}
               eventContent={renderEventContent}
               eventDidMount={(arg) => {
                 const el = arg.el;
@@ -581,7 +577,6 @@ export default function App() {
       {!isMobile && (
         <main className="mainWrap">
           <AdditionalInfo sections={additionalInfoSections} triggerText="*Additional Info*" />
-
           <h1 className="title">Ice Reservation Availability</h1>
 
           <div className="centerNav">
@@ -665,7 +660,7 @@ export default function App() {
         </main>
       )}
 
-      {/* Booking modal (desktop + mobile) */}
+      {/* Booking modal rendered for BOTH desktop and mobile */}
       {selected && (
         <BookingModal
           slot={selected}
