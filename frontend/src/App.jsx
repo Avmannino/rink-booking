@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import axios from 'axios';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -8,58 +8,42 @@ import BookingModal from './BookingModal';
 import Carousel from "./Carousel";
 import AdditionalInfo from './AdditionalInfo';
 
-import './calendar.css'; // dark theme, layout, row heights, mini-cal styling
+import './calendar.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
-
-// If you place your logo at frontend/public/logo.png it will be served from /logo.png
 const LOGO_SRC = '/logo.png';
 
-// --- small format helpers ---
+// ---- format helpers
 function fmtDuration(ms) {
-  const totalMin = Math.round(ms / 60000);
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
+  const t = Math.round(ms / 60000), h = Math.floor(t / 60), m = t % 60;
   if (h && m) return `${h}h ${m}m`;
   if (h) return `${h}h`;
-  return `${totalMin} min`;
+  return `${t} min`;
 }
-function fmtStartTime(date) {
-  const s = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function fmtStartTime(d) {
+  const s = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return s.replace(':00', '');
 }
-function fmtEndTime(date) {
-  const s = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function fmtEndTime(d) {
+  const s = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return s.replace(':00', '');
 }
 function fmtDate(d) {
-  return d.toLocaleDateString([], {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 function fmtUSD(n) {
-  return n.toLocaleString(undefined, {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2
-  });
+  return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
 }
-// YYYY-MM-DD in local time (avoids UTC shifts)
 function toYMD(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const da = String(d.getDate()).padStart(2, '0');
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), da = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${da}`;
 }
 
-// Use feature detection for hover (works on touch-capable laptops too)
+// Real hover check (desktop only typically)
 const canHover = () =>
   typeof window !== 'undefined' &&
   window.matchMedia &&
-  window.matchMedia('(hover: hover)').matches;
+  window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 
 export default function App() {
   const [events, setEvents] = useState([]);
@@ -70,7 +54,6 @@ export default function App() {
   const [currentView, setCurrentView] = useState('timeGridWeek');
   const [currentDate, setCurrentDate] = useState(new Date());
 
-  // mini calendar title + selected day
   const [miniTitle, setMiniTitle] = useState(
     new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date())
   );
@@ -79,7 +62,7 @@ export default function App() {
   const mainCalRef = useRef(null);
   const miniCalRef = useRef(null);
 
-  // ----- MOBILE state -----
+  // Mobile state
   const [isMobile, setIsMobile] = useState(
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 980px)').matches : false
   );
@@ -92,27 +75,78 @@ export default function App() {
     const mq = window.matchMedia('(max-width: 980px)');
     const onChange = (e) => setIsMobile(e.matches);
     mq.addEventListener?.('change', onChange) || mq.addListener(onChange);
-    return () =>
-      (mq.removeEventListener?.('change', onChange) || mq.removeListener(onChange));
+    return () => (mq.removeEventListener?.('change', onChange) || mq.removeListener(onChange));
   }, []);
 
-  // Keep mobile day calendar synced to selected date
   useEffect(() => {
     if (!isMobile || !mobileDayOpen) return;
     const api = mobileDayRef.current?.getApi?.();
     if (api) api.gotoDate(mobileDayDate);
   }, [isMobile, mobileDayOpen, mobileDayDate]);
 
-  // Map API -> FC events (keep all props like price_cents)
+  // Normalize events for FC
   const calendarEvents = useMemo(
-    () =>
-      events.map((s) => ({
-        ...s,
-        title: 'Available Ice'
-      })),
+    () => events.map((s) => ({ ...s, title: 'Available Ice' })),
     [events]
   );
 
+  // Set of YYYY-MM-DD that have at least one event (for mini-cal coloring)
+  const availableDaysSet = useMemo(() => {
+    const s = new Set();
+    for (const ev of events) {
+      if (!ev?.start) continue;
+      const d = new Date(ev.start);
+      if (!isNaN(d)) s.add(toYMD(d));
+    }
+    return s;
+  }, [events]);
+
+  // Key to force the mini calendars to remount when availability changes
+  const miniAvailKey = useMemo(
+    () => Array.from(availableDaysSet).sort().join(','),
+    [availableDaysSet]
+  );
+
+  // Classnames for mini calendar cells (desktop + mobile)
+  const getMiniDayCellClassNames = useCallback(
+    (arg) => {
+      const classes = ['miniCell'];
+      const ymd = toYMD(arg.date);
+
+      // Only color days that belong to the visible month
+      const inMonth =
+        arg.view.currentStart.getMonth() === arg.date.getMonth() &&
+        arg.view.currentStart.getFullYear() === arg.date.getFullYear();
+
+      if (ymd === selectedMiniISO) classes.push('miniSelected');
+      if (inMonth) {
+        classes.push(availableDaysSet.has(ymd) ? 'hasAvail' : 'noAvail');
+      }
+      return classes;
+    },
+    [selectedMiniISO, availableDaysSet]
+  );
+
+  // FORCE color on day numbers (handles theme specificity)
+  const miniDayCellDidMount = useCallback((arg) => {
+    const ymd = toYMD(arg.date);
+    const numEl = arg.el.querySelector('.fc-daygrid-day-number');
+    if (!numEl) return;
+
+    const inMonth =
+      arg.view.currentStart.getMonth() === arg.date.getMonth() &&
+      arg.view.currentStart.getFullYear() === arg.date.getFullYear();
+
+    if (!inMonth) {
+      numEl.style.color = '#64748b'; // muted out-of-month
+      return;
+    }
+
+    numEl.style.fontWeight = '800';
+    numEl.style.color = availableDaysSet.has(ymd) ? '#22c55e' : '#ef4444';
+  }, [availableDaysSet]);
+
+  // Fetch slots
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -127,32 +161,28 @@ export default function App() {
     })();
   }, []);
 
+  // Click on an event (both desktop & mobile day view)
   const handleEventClick = (info) => {
     const slot = events.find((e) => e.id === info.event.id);
     if (slot) setSelected(slot);
   };
 
-  // Unified event label
+  // Event label
   const renderEventContent = (arg) => {
-    const start = arg.event.start;
-    const end = arg.event.end;
+    const start = arg.event.start, end = arg.event.end;
     if (!start || !end) return null;
     const text = `${fmtStartTime(start)} - Available Ice (${fmtDuration(end - start)})`;
     return <div className="eventText">{text}</div>;
   };
 
-  // Hover tooltip (desktop only; fades in/out)
+  // Tooltip (desktop/hover devices only)
   const handleMouseEnter = (arg) => {
-    if (!canHover()) return; // allow hover on real-hover devices only
+    if (!canHover()) return;
     arg.el.style.cursor = 'pointer';
-    const start = arg.event.start;
-    const end = arg.event.end;
+    const start = arg.event.start, end = arg.event.end;
     if (!start || !end) return;
 
-    const priceCents =
-      arg.event.extendedProps && arg.event.extendedProps.price_cents
-        ? arg.event.extendedProps.price_cents
-        : 0;
+    const priceCents = arg.event.extendedProps?.price_cents ?? 0;
     const tip = document.createElement('div');
     tip.className = 'slot-tooltip';
     Object.assign(tip.style, {
@@ -187,7 +217,7 @@ export default function App() {
       const vw = innerWidth, vh = innerHeight;
       let x = e.clientX + offX;
       let y = e.clientY - rect.height - offY;
-      if (y < 8) y = e.clientY + offY; // flip below
+      if (y < 8) y = e.clientY + offY;
       if (x + rect.width + 8 > vw) x = vw - rect.width - 8;
       if (y + rect.height + 8 > vh) y = vh - rect.height - 8;
       tip.style.left = `${x}px`;
@@ -217,11 +247,7 @@ export default function App() {
     if (tip) {
       tip.style.opacity = '0';
       tip.style.transform = 'translateY(4px)';
-      // remove after transition ends
-      const cleanup = () => tip.remove();
-      tip.addEventListener('transitionend', cleanup, { once: true });
-      // safety timeout in case transitionend doesn't fire
-      setTimeout(cleanup, 220);
+      setTimeout(() => tip.remove(), 170);
       delete arg.el._slotTooltip;
     }
   };
@@ -229,6 +255,7 @@ export default function App() {
   // Main calendar API helpers
   const getApi = () =>
     mainCalRef.current && mainCalRef.current.getApi ? mainCalRef.current.getApi() : null;
+
   const goPrev = () => {
     const api = getApi();
     if (api) {
@@ -250,16 +277,14 @@ export default function App() {
   const switchView = (viewName) => {
     setCurrentView(viewName);
     const api = getApi();
-    if (api) {
-      api.changeView(viewName);
-    }
+    if (api) api.changeView(viewName);
   };
 
-  // Mini calendar click: desktop -> goto day view, mobile -> open ONLY the mobile day view
+  // Mini calendar click behavior
   const handleMiniDateClick = (arg) => {
     if (isMobile) {
       setMobileDayDate(arg.date);
-      setMobileDayOpen(true);  // hide mobile mini, show mobile day view
+      setMobileDayOpen(true);
       setSelectedMiniISO(toYMD(arg.date));
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
@@ -275,85 +300,31 @@ export default function App() {
     }
   };
 
-  // --------- STATIC Additional Info content ----------
+  // Additional Info sections (static)
   const additionalInfoSections = [
-    {
-      id: 'policies',
-      title: 'Arena Policies',
-      content: (
-        <div>
-          <p>
-            Helmets required for all skaters under 18. No outside food in bench area.
-            Please arrive 15 minutes early for check-in.
-          </p>
-        </div>
-      ),
-    },
-    {
-      id: 'cancellations',
-      title: 'Cancellations & Refunds',
-      content: (
-        <div>
-          <p>
-            Cancellations must be received 48 hours prior to booking start time
-            for a full refund. Inside 48 hours, fees are non-refundable.
-          </p>
-        </div>
-      ),
-    },
-    {
-      id: 'equipment',
-      title: 'Equipment & Rentals',
-      content: (
-        <div>
-          <p>
-            Skate rentals available on site. The first 15 rentals are free; additional rentals are $2 each.
-          </p>
-        </div>
-      ),
-    },
-    {
-      id: 'parking',
-      title: 'Parking & Entry',
-      content: (
-        <div>
-          <p>
-            Free parking on the south lot. Use the main entrance; the desk is
-            immediately to your right for wristbands and waivers.
-          </p>
-        </div>
-      ),
-    },
-    {
-      id: 'contact',
-      title: 'Contact & Support',
-      content: (
-        <div>
-          <p>
-            Questions? Call (555) 555-0123 or email support@wingsarena.com.
-            Front desk staffed 7am–10pm daily.
-          </p>
-        </div>
-      ),
-    },
+    { id: 'policies', title: 'Arena Policies', content: <div><p>Helmets required for all skaters under 18. No outside food in bench area. Please arrive 15 minutes early for check-in.</p></div> },
+    { id: 'cancellations', title: 'Cancellations & Refunds', content: <div><p>Cancellations must be received 48 hours prior to booking start time for a full refund. Inside 48 hours, fees are non-refundable.</p></div> },
+    { id: 'equipment', title: 'Equipment & Rentals', content: <div><p>Skate rentals available on site. The first 15 rentals are free; additional rentals are $2 each.</p></div> },
+    { id: 'parking', title: 'Parking & Entry', content: <div><p>Free parking on the south lot. Use the main entrance; the desk is immediately to your right for wristbands and waivers.</p></div> },
+    { id: 'contact', title: 'Contact & Support', content: <div><p>Questions? Call (555) 555-0123 or email support@wingsarena.com. Front desk staffed 7am–10pm daily.</p></div> },
   ];
-  // ---------------------------------------------------
 
   return (
     <div className="pageWrap">
       {/* LEFT column */}
       <div className="leftCol">
-        <a
-          href="https://www.wingsarena.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="miniLogoLink"
-          aria-label="Go to Wings Arena website"
-        >
-          <img src={LOGO_SRC} alt="Wings Arena" className="miniLogo" />
-        </a>
+        <img src={LOGO_SRC} alt="Wings Arena" className="miniLogo" />
 
-        {/* DESKTOP: always show mini calendar + carousel */}
+        {/* Mobile shows Additional Info trigger too */}
+        {isMobile && (
+          <AdditionalInfo
+            sections={additionalInfoSections}
+            triggerText="Additional Info"
+            footerNote="The booking calendar reflects available ice times 90 days out. If you'd like to inquire about a booking past 90 days, please email info@wingsarena.com."
+          />
+        )}
+
+        {/* DESKTOP: mini calendar + carousel */}
         {!isMobile && (
           <>
             <aside className="miniWrap">
@@ -363,37 +334,26 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     const miniApi = miniCalRef.current?.getApi();
-                    if (miniApi) {
-                      miniApi.prev();
-                      const title = miniApi.view.title;
-                      setMiniTitle(title);
-                    }
+                    if (miniApi) { miniApi.prev(); setMiniTitle(miniApi.view.title); }
                   }}
-                  aria-label="Previous month"
                 >
                   ‹
                 </button>
-
                 <div className="miniHeaderTitle">{miniTitle}</div>
-
                 <button
                   className="miniHeaderBtn"
                   type="button"
                   onClick={() => {
                     const miniApi = miniCalRef.current?.getApi();
-                    if (miniApi) {
-                      miniApi.next();
-                      const title = miniApi.view.title;
-                      setMiniTitle(title);
-                    }
+                    if (miniApi) { miniApi.next(); setMiniTitle(miniApi.view.title); }
                   }}
-                  aria-label="Next month"
                 >
                   ›
                 </button>
               </div>
 
               <FullCalendar
+                key={miniAvailKey}
                 ref={miniCalRef}
                 plugins={[dayGridPlugin, interactionPlugin]}
                 initialView="dayGridMonth"
@@ -404,37 +364,27 @@ export default function App() {
                 expandRows={true}
                 height="auto"
                 contentHeight="auto"
-                dayCellClassNames={(arg) => {
-                  const classes = ['miniCell'];
-                  if (toYMD(arg.date) === selectedMiniISO) classes.push('miniSelected');
-                  return classes;
-                }}
+                dayCellClassNames={getMiniDayCellClassNames}
+                dayCellDidMount={miniDayCellDidMount}
                 dateClick={handleMiniDateClick}
                 initialDate={currentDate}
-                datesSet={(info) => {
+                datesSet={(info) =>
                   setMiniTitle(
-                    new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
-                      info.view.currentStart
-                    )
-                  );
-                }}
+                    new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
+                      .format(info.view.currentStart)
+                  )
+                }
               />
             </aside>
 
             <Carousel
-              images={[
-                "/slide1.jpg",
-                "/slide2.jpg",
-                "/slide3.jpg",
-                "/slide4.jpg",
-                "/slide5.jpg",
-              ]}
+              images={["/slide1.jpg", "/slide2.jpg", "/slide3.jpg", "/slide4.jpg", "/slide5.jpg"]}
               interval={6000}
             />
           </>
         )}
 
-        {/* MOBILE: title + (either mini OR day view) + (optional carousel) */}
+        {/* MOBILE: mini calendar + carousel (when not in day view) */}
         {isMobile && !mobileDayOpen && (
           <>
             <h1 className="title mobileTitle">Ice Reservation Availability</h1>
@@ -445,37 +395,26 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     const miniApi = miniCalRef.current?.getApi();
-                    if (miniApi) {
-                      miniApi.prev();
-                      const title = miniApi.view.title;
-                      setMiniTitle(title);
-                    }
+                    if (miniApi) { miniApi.prev(); setMiniTitle(miniApi.view.title); }
                   }}
-                  aria-label="Previous month"
                 >
                   ‹
                 </button>
-
                 <div className="miniHeaderTitle">{miniTitle}</div>
-
                 <button
                   className="miniHeaderBtn"
                   type="button"
                   onClick={() => {
                     const miniApi = miniCalRef.current?.getApi();
-                    if (miniApi) {
-                      miniApi.next();
-                      const title = miniApi.view.title;
-                      setMiniTitle(title);
-                    }
+                    if (miniApi) { miniApi.next(); setMiniTitle(miniApi.view.title); }
                   }}
-                  aria-label="Next month"
                 >
                   ›
                 </button>
               </div>
 
               <FullCalendar
+                key={miniAvailKey}
                 ref={miniCalRef}
                 plugins={[dayGridPlugin, interactionPlugin]}
                 initialView="dayGridMonth"
@@ -486,52 +425,35 @@ export default function App() {
                 expandRows={true}
                 height="auto"
                 contentHeight="auto"
-                dayCellClassNames={(arg) => {
-                  const classes = ['miniCell'];
-                  if (toYMD(arg.date) === selectedMiniISO) classes.push('miniSelected');
-                  return classes;
-                }}
+                dayCellClassNames={getMiniDayCellClassNames}
+                dayCellDidMount={miniDayCellDidMount}
                 dateClick={handleMiniDateClick}
                 initialDate={currentDate}
-                datesSet={(info) => {
+                datesSet={(info) =>
                   setMiniTitle(
-                    new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
-                      info.view.currentStart
-                    )
-                  );
-                }}
+                    new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
+                      .format(info.view.currentStart)
+                  )
+                }
               />
             </aside>
 
             <Carousel
-              images={[
-                "/slide1.jpg",
-                "/slide2.jpg",
-                "/slide3.jpg",
-                "/slide4.jpg",
-                "/slide5.jpg",
-              ]}
+              images={["/slide1.jpg", "/slide2.jpg", "/slide3.jpg", "/slide4.jpg", "/slide5.jpg"]}
               interval={6000}
             />
           </>
         )}
 
+        {/* MOBILE day view */}
         {isMobile && mobileDayOpen && (
           <section className="mobileDayWrap">
             <div className="mobileDayHeader">
-              <button className="mobileBackBtn" onClick={() => setMobileDayOpen(false)}>
-                ⮜ Back
-              </button>
-
+              <button className="mobileBackBtn" onClick={() => setMobileDayOpen(false)}>⮜ Back</button>
               <div className="mobileDayTitle">
-                {new Intl.DateTimeFormat('en-US', {
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric'
-                }).format(mobileDayDate)}
+                {new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                  .format(mobileDayDate)}
               </div>
-
-              {/* Empty spacer to balance the grid so the title stays centered */}
               <span className="mobileHeaderSpacer" />
             </div>
 
@@ -554,6 +476,8 @@ export default function App() {
               events={calendarEvents}
               eventClick={handleEventClick}
               eventContent={renderEventContent}
+              eventMouseEnter={handleMouseEnter}
+              eventMouseLeave={handleMouseLeave}
               eventDidMount={(arg) => {
                 const el = arg.el;
                 el.style.background = '#d6001d7a';
@@ -573,47 +497,30 @@ export default function App() {
         )}
       </div>
 
-      {/* RIGHT: main calendar — hidden on mobile */}
+      {/* RIGHT: main calendar */}
       {!isMobile && (
         <main className="mainWrap">
-          <AdditionalInfo sections={additionalInfoSections} triggerText="*Additional Info*" />
+          <AdditionalInfo
+            sections={additionalInfoSections}
+            triggerText="Additional Info"
+            footerNote="The booking calendar reflects available ice times 90 days out. If you'd like to inquire about a booking past 90 days, please email info@wingsarena.com."
+          />
+
           <h1 className="title">Ice Reservation Availability</h1>
 
           <div className="centerNav">
-            <button className="navBtn" onClick={goPrev} aria-label="Previous">
-              ‹
-            </button>
+            <button className="navBtn" onClick={goPrev} aria-label="Previous">‹</button>
             <div className="currentMonth">
-              {calTitle ||
-                new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
-                  currentDate
-                )}
+              {calTitle || new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(currentDate)}
             </div>
-            <button className="navBtn" onClick={goNext} aria-label="Next">
-              ›
-            </button>
+            <button className="navBtn" onClick={goNext} aria-label="Next">›</button>
           </div>
 
           <div className="viewRow">
             <div className="viewBtns">
-              <button
-                className={'viewBtn ' + (currentView === 'dayGridMonth' ? 'active' : '')}
-                onClick={() => switchView('dayGridMonth')}
-              >
-                Month
-              </button>
-              <button
-                className={'viewBtn ' + (currentView === 'timeGridWeek' ? 'active' : '')}
-                onClick={() => switchView('timeGridWeek')}
-              >
-                Week
-              </button>
-              <button
-                className={'viewBtn ' + (currentView === 'timeGridDay' ? 'active' : '')}
-                onClick={() => switchView('timeGridDay')}
-              >
-                Day
-              </button>
+              <button className={'viewBtn ' + (currentView === 'dayGridMonth' ? 'active' : '')} onClick={() => switchView('dayGridMonth')}>Month</button>
+              <button className={'viewBtn ' + (currentView === 'timeGridWeek' ? 'active' : '')} onClick={() => switchView('timeGridWeek')}>Week</button>
+              <button className={'viewBtn ' + (currentView === 'timeGridDay' ? 'active' : '')} onClick={() => switchView('timeGridDay')}>Day</button>
             </div>
           </div>
 
@@ -636,6 +543,8 @@ export default function App() {
             events={calendarEvents}
             eventClick={handleEventClick}
             eventContent={renderEventContent}
+            eventMouseEnter={handleMouseEnter}
+            eventMouseLeave={handleMouseLeave}
             eventDidMount={(arg) => {
               const el = arg.el;
               el.style.background = '#d6001d7a';
@@ -647,8 +556,6 @@ export default function App() {
               el.style.transform = 'scaleX(0.80)';
               el.style.transformOrigin = 'center';
             }}
-            eventMouseEnter={handleMouseEnter}
-            eventMouseLeave={handleMouseLeave}
             datesSet={(info) => {
               setCalTitle(info.view.title);
               setCurrentView(info.view.type);
@@ -660,7 +567,7 @@ export default function App() {
         </main>
       )}
 
-      {/* Booking modal rendered for BOTH desktop and mobile */}
+      {/* Booking modal (both desktop and mobile) */}
       {selected && (
         <BookingModal
           slot={selected}
