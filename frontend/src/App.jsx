@@ -39,6 +39,61 @@ function toYMD(d) {
   return `${y}-${m}-${da}`;
 }
 
+// ===== HOLIDAY HELPERS (blackout) =====
+
+// Fixed-date holidays: New Year's Day (01-01), New Year's Eve (12-31),
+// Christmas Eve (12-24), Christmas Day (12-25)
+function isFixedHolidayYMD(ymd) {
+  const mmdd = ymd.slice(5);
+  return mmdd === '01-01' || mmdd === '12-31' || mmdd === '12-24' || mmdd === '12-25';
+}
+
+// Thanksgiving (USA): 4th Thursday in November
+function thanksgivingYMD(year) {
+  // Nov 1 UTC noon to avoid DST artifacts
+  const d = new Date(Date.UTC(year, 10, 1, 12, 0, 0));
+  const day = d.getUTCDay(); // 0..6
+  const offsetToThursday = (4 - day + 7) % 7; // Thursday=4
+  const firstThursday = 1 + offsetToThursday;
+  const fourthThursday = firstThursday + 21;
+  const y = d.getUTCFullYear();
+  const m = '11';
+  const dd = String(fourthThursday).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+function isHolidayDateLocal(dateLocal) {
+  const ymd = toYMD(dateLocal);
+  if (isFixedHolidayYMD(ymd)) return true;
+  const year = dateLocal.getFullYear();
+  return ymd === thanksgivingYMD(year);
+}
+
+// Date helpers for overlap checks
+function startOfLocalDay(d) {
+  const nd = new Date(d);
+  nd.setHours(0, 0, 0, 0);
+  return nd;
+}
+function addDaysLocal(d, days) {
+  const nd = new Date(d);
+  nd.setDate(nd.getDate() + days);
+  return nd;
+}
+
+// Does [start, end) overlap any holiday local day?
+function overlapsHolidayLocal(start, end) {
+  if (!(start instanceof Date) || !(end instanceof Date) || isNaN(start) || isNaN(end)) return false;
+  if (end <= start) return false;
+  let cursor = startOfLocalDay(start);
+  const endBoundary = startOfLocalDay(end);
+  while (cursor <= endBoundary) {
+    if (isHolidayDateLocal(cursor)) return true;
+    cursor = addDaysLocal(cursor, 1);
+  }
+  return false;
+}
+
 // Real hover check (desktop only typically)
 const canHover = () =>
   typeof window !== 'undefined' &&
@@ -146,13 +201,22 @@ export default function App() {
     numEl.style.color = availableDaysSet.has(ymd) ? '#22c55e' : '#ef4444';
   }, [availableDaysSet]);
 
-  // Fetch slots
+  // Fetch slots (filter out holiday overlaps)
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
         const { data } = await axios.get(`${API_BASE}/api/slots`);
-        setEvents(Array.isArray(data) ? data : []);
+        const raw = Array.isArray(data) ? data : [];
+
+        const filtered = raw.filter((s) => {
+          const start = new Date(s.start);
+          const end = new Date(s.end);
+          if (isNaN(start) || isNaN(end)) return false;
+          return !overlapsHolidayLocal(start, end);
+        });
+
+        setEvents(filtered);
       } catch (e) {
         console.error(e);
       } finally {
@@ -280,7 +344,7 @@ export default function App() {
     if (api) api.changeView(viewName);
   };
 
-  // NEW: Clicking a day in the MAIN calendar's month view -> jump to that day's view
+  // Clicking a day in the MAIN calendar's month view -> jump to that day's view
   const handleMainDateClick = useCallback((info) => {
     if (info.view.type !== 'dayGridMonth') return;
 
@@ -296,12 +360,52 @@ export default function App() {
     setCalTitle(api.view.title);
   }, []);
 
-  // NEW: Show pointer cursor over month day cells in MAIN calendar (only in month view)
+  // POINTER + FULL-CELL OUTLINE on month day cells in MAIN calendar
   const handleMainDayCellDidMount = useCallback((arg) => {
     if (arg.view.type !== 'dayGridMonth') return;
-    // Apply the pointer to the interactive area of each day cell
-    const frame = arg.el.querySelector('.fc-daygrid-day-frame') || arg.el;
+
+    const td = arg.el; // the <td class="fc-daygrid-day">
+    const frame = td.querySelector('.fc-daygrid-day-frame') || td;
+
+    // keep pointer on the main clickable surface
     frame.style.cursor = 'pointer';
+
+    const onEnter = () => {
+      // Outline the entire grid cell (not just event area)
+      td.style.outline = '2px solid #334155';
+      td.style.outlineOffset = '-1px'; // sit neatly inside existing borders
+    };
+    const onLeave = () => {
+      td.style.outline = '';
+      td.style.outlineOffset = '';
+    };
+
+    // Attach to the cell so the whole box triggers the effect
+    td.addEventListener('mouseenter', onEnter);
+    td.addEventListener('mouseleave', onLeave);
+
+    // store for cleanup
+    td._monthHoverEnter = onEnter;
+    td._monthHoverLeave = onLeave;
+  }, []);
+
+  const handleMainDayCellWillUnmount = useCallback((arg) => {
+    const td = arg.el;
+    const frame = td.querySelector('.fc-daygrid-day-frame') || td;
+
+    if (td._monthHoverEnter) {
+      td.removeEventListener('mouseenter', td._monthHoverEnter);
+      delete td._monthHoverEnter;
+    }
+    if (td._monthHoverLeave) {
+      td.removeEventListener('mouseleave', td._monthHoverLeave);
+      delete td._monthHoverLeave;
+    }
+
+    // reset styles
+    frame.style.cursor = '';
+    td.style.outline = '';
+    td.style.outlineOffset = '';
   }, []);
 
   // Mini calendar click behavior
@@ -569,10 +673,11 @@ export default function App() {
             eventContent={renderEventContent}
             eventMouseEnter={handleMouseEnter}
             eventMouseLeave={handleMouseLeave}
-            /* NEW: month-day click handler on MAIN calendar */
+            /* Month-day click -> day view */
             dateClick={handleMainDateClick}
-            /* NEW: pointer cursor on month day cells (MAIN calendar) */
+            /* Pointer + full-cell outline on month day cells (MAIN calendar) */
             dayCellDidMount={handleMainDayCellDidMount}
+            dayCellWillUnmount={handleMainDayCellWillUnmount}
             eventDidMount={(arg) => {
               const el = arg.el;
               el.style.background = '#d6001d7a';
