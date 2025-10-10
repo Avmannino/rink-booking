@@ -280,6 +280,30 @@ export default function App() {
     if (api) api.changeView(viewName);
   };
 
+  // NEW: Clicking a day in the MAIN calendar's month view -> jump to that day's view
+  const handleMainDateClick = useCallback((info) => {
+    if (info.view.type !== 'dayGridMonth') return;
+
+    const api = getApi();
+    if (!api) return;
+
+    api.gotoDate(info.date);
+    api.changeView('timeGridDay');
+
+    setCurrentView('timeGridDay');
+    setCurrentDate(info.date);
+    setSelectedMiniISO(toYMD(info.date));
+    setCalTitle(api.view.title);
+  }, []);
+
+  // NEW: Show pointer cursor over month day cells in MAIN calendar (only in month view)
+  const handleMainDayCellDidMount = useCallback((arg) => {
+    if (arg.view.type !== 'dayGridMonth') return;
+    // Apply the pointer to the interactive area of each day cell
+    const frame = arg.el.querySelector('.fc-daygrid-day-frame') || arg.el;
+    frame.style.cursor = 'pointer';
+  }, []);
+
   // Mini calendar click behavior
   const handleMiniDateClick = (arg) => {
     if (isMobile) {
@@ -545,13 +569,16 @@ export default function App() {
             eventContent={renderEventContent}
             eventMouseEnter={handleMouseEnter}
             eventMouseLeave={handleMouseLeave}
+            /* NEW: month-day click handler on MAIN calendar */
+            dateClick={handleMainDateClick}
+            /* NEW: pointer cursor on month day cells (MAIN calendar) */
+            dayCellDidMount={handleMainDayCellDidMount}
             eventDidMount={(arg) => {
               const el = arg.el;
               el.style.background = '#d6001d7a';
               el.style.border = '1px solid #ffffff95';
               el.style.color = '#e5e7eb';
               el.style.borderRadius = '6px';
-              el.style.boxShadow = '0 6px 16px rgba(0,0,0,0.35)';
               el.style.cursor = 'pointer';
               el.style.transform = 'scaleX(0.80)';
               el.style.transformOrigin = 'center';
