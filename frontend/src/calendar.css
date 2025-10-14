@@ -20,7 +20,9 @@ html, body {
   box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
   padding: 14px 10px 10px;
   height: fit-content;
-  margin-top: 50px;
+  margin-top: 40px;
+  position: relative;
+  left: 0.3vw;
 }
 .leftCol {
   display: flex;
@@ -30,7 +32,7 @@ html, body {
   right: .5vw;
   height: fit-content;
   margin-top: 10px;
-  gap: 2px;
+  gap: 10px;
 }
 /* Logo */
 .miniLogoWrap {
@@ -44,11 +46,12 @@ html, body {
   padding: 10px 8px;
 }
 .miniLogo {
-  max-width: 260px;
-  height: auto;
-  position: absolute;
-  top: -21.5vh;
-  left: 0vw;
+  max-width: 130px;
+  display: flex;
+  align-self: center;
+  position: sticky;
+  margin-bottom: -20px;
+  margin-top: -150px;
 }
 /* Mini calendar header */
 .miniHeaderBar {
@@ -274,6 +277,9 @@ html, body {
 .carousel {
   position: relative;
   top: 2vh;
+  left: 0.3vw;
+  display: flex;
+  align-self: center;
   overflow: hidden;
   border-radius: 12px;
   background: #0f172a;
@@ -390,7 +396,7 @@ html, body {
   }
 
   /* Make mini calendar large & comfy */
-  .miniWrap { padding: 12px; border-radius: 14px; margin-bottom: 5px; }
+  .miniWrap { padding: 12px; border-radius: 14px; margin-bottom: 5px; position: relative; display: flex; align-self: center; left: 0.3vw; }
   .miniHeaderBar { grid-template-columns: 44px 1fr 44px; gap: 8px; padding: 0 6px 10px 6px; margin-bottom: 10px; }
   .miniHeaderBtn { width: 44px; height: 28px; font-size: 26px; }
   .miniHeaderTitle { font-size: 18px; }
