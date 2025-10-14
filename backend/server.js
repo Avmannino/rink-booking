@@ -41,8 +41,9 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 const ICS_URL = process.env.AVAILABILITY_ICS_URL || '';
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
-const SUCCESS_URL = process.env.SUCCESS_URL || 'http://localhost:5173/success';
-const CANCEL_URL = process.env.CANCEL_URL || 'http://localhost:5173/cancel';
+// Note: SUCCESS_URL may be a full URL or a path like `${CLIENT_ORIGIN}/success`
+const SUCCESS_URL = process.env.SUCCESS_URL || `${CLIENT_ORIGIN}/success`;
+const CANCEL_URL = process.env.CANCEL_URL || `${CLIENT_ORIGIN}/`;
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const PII_ENC_KEY = process.env.PII_ENC_KEY || '';
@@ -76,6 +77,17 @@ console.log('[BOOT]',
     icsHost: (function () { try { return ICS_URL ? new URL(ICS_URL).host : null; } catch (e) { return null; } })()
   }, null, 2)
 );
+
+// ===== Utility: build success_url with confirm + session_id =====
+// IMPORTANT: build this as a raw string so {CHECKOUT_SESSION_ID} is NOT URL-encoded.
+function buildSuccessUrl() {
+  const base = SUCCESS_URL.startsWith('http')
+    ? SUCCESS_URL
+    : `${CLIENT_ORIGIN}/${SUCCESS_URL.replace(/^\//, '')}`;
+  const sep = base.includes('?') ? '&' : '?';
+  // Do NOT encode braces – Stripe replaces this literal token server-side.
+  return `${base}${sep}confirm=1&session_id={CHECKOUT_SESSION_ID}`;
+}
 
 // ===== Security middleware =====
 app.disable('x-powered-by');
@@ -437,11 +449,14 @@ app.post('/api/create-checkout-session', async function (req, res) {
       ' – ' +
       new Date(end).toISOString();
 
+    // Build success URL with confirm flag & session_id placeholder (NOT encoded)
+    const successUrl = buildSuccessUrl();
+
     // Create the Stripe Checkout Session (no custom idempotency key to avoid 400s)
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       payment_method_types: ['card'],
-      success_url: SUCCESS_URL + '?session_id={CHECKOUT_SESSION_ID}',
+      success_url: successUrl,
       cancel_url: CANCEL_URL,
       customer_email: email,
       line_items: [{
@@ -466,7 +481,7 @@ app.post('/api/create-checkout-session', async function (req, res) {
       checkout_session_id: session.id
     });
 
-    console.log('[CHECKOUT] Session created', session.id);
+    console.log('[CHECKOUT] Session created', session.id, 'success_url:', successUrl);
     res.json({ url: session.url });
   } catch (err) {
     console.error('[CHECKOUT] Error:', err);
@@ -530,15 +545,50 @@ app.post('/api/checkout/confirm', bodyParser.json(), async (req, res) => {
       await supabase.from('slot_holds').delete().eq('slot_id', sid);
     }
 
+    // Safeguard: never fail the confirmation just because email isn't configured
+    const canSendMail =
+      FROM_EMAIL &&
+      (
+        (MAIL_PROVIDER === 'smtp' && SMTP_USER && SMTP_PASS) ||
+        RESEND_API_KEY
+      );
+
     const whenText = fmtWhen(start, end);
     const amountText = fmtUSDFromCents(amountTotal);
-    if (email) await sendBookingEmail({ to: email, whenText, amountText });
-    if (ADMIN_EMAIL) await sendBookingEmail({ to: ADMIN_EMAIL, whenText, amountText });
+
+    if (canSendMail) {
+      try {
+        if (email) await sendBookingEmail({ to: email, whenText, amountText });
+        if (ADMIN_EMAIL) await sendBookingEmail({ to: ADMIN_EMAIL, whenText, amountText });
+      } catch (mailErr) {
+        console.error('[CONFIRM] Email send failed:', mailErr?.message || mailErr);
+        // swallow email errors
+      }
+    } else {
+      console.warn('[CONFIRM] Mail not configured; skipping confirmation emails.');
+    }
 
     return res.json({ ok: true });
   } catch (e) {
     console.error('[CONFIRM] Error:', e?.message || e);
     return res.status(500).json({ error: 'Failed to confirm session' });
+  }
+});
+
+// ---- Optional: passthrough /success -> root with confirm flag ----
+// If your SUCCESS_URL still points to /success, this ensures the frontend sees ?confirm=1.
+app.get('/success', (req, res) => {
+  try {
+    const sessionId = req.query.session_id || '';
+    const redirectStatus = req.query.redirect_status;
+    const u = new URL(`${CLIENT_ORIGIN}/`);
+    u.searchParams.set('confirm', '1');
+    if (sessionId) u.searchParams.set('session_id', sessionId);
+    if (redirectStatus) u.searchParams.set('redirect_status', redirectStatus);
+    return res.redirect(302, u.toString());
+  } catch (e) {
+    console.warn('[SUCCESS passthrough] Failed to redirect:', e?.message || e);
+    return res.redirect(302, `${CLIENT_ORIGIN}/?confirm=1`);
   }
 });
 
