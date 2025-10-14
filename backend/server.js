@@ -26,7 +26,12 @@ import Stripe from 'stripe';
 import ical from 'node-ical';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
-import nodemailer from 'nodemailer'; // <-- for SMTP email
+import nodemailer from 'nodemailer';
+
+// --- security & validation ---
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
 
 const app = express();
 
@@ -40,6 +45,7 @@ const SUCCESS_URL = process.env.SUCCESS_URL || 'http://localhost:5173/success';
 const CANCEL_URL = process.env.CANCEL_URL || 'http://localhost:5173/cancel';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const PII_ENC_KEY = process.env.PII_ENC_KEY || '';
 
 // mail settings
 const MAIL_PROVIDER = (process.env.MAIL_PROVIDER || '').toLowerCase(); // 'smtp' | 'resend'
@@ -71,6 +77,13 @@ console.log('[BOOT]',
   }, null, 2)
 );
 
+// ===== Security middleware =====
+app.disable('x-powered-by');
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
+
 // Simple request logger
 app.use(function (req, _res, next) {
   console.log('[HTTP] ' + req.method + ' ' + req.url);
@@ -83,22 +96,36 @@ app.use(function (req, res, next) {
   bodyParser.json()(req, res, next);
 });
 
-// Allow both localhost and 127.0.0.1 in dev
-var allowedOrigins = new Set([
+// Rate limits
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use('/api/', apiLimiter);
+
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300
+});
+app.use('/api/stripe/webhook', webhookLimiter);
+
+// CORS (exact origins only)
+const allowedOrigins = new Set([
   CLIENT_ORIGIN,
   'http://localhost:5173',
   'http://127.0.0.1:5173'
 ]);
 app.use(cors({
-  origin: function (origin, cb) {
+  origin(origin, cb) {
     if (!origin) return cb(null, true);
-    var ok = false;
-    allowedOrigins.forEach(function (o) {
-      if (o && origin.indexOf(o) === 0) ok = true;
-    });
-    if (ok) return cb(null, true);
+    if (allowedOrigins.has(origin)) return cb(null, true);
     return cb(new Error('Not allowed by CORS: ' + origin));
-  }
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'stripe-signature'],
+  credentials: false
 }));
 
 // Root and health
@@ -128,13 +155,11 @@ function slotId(start, end) {
    PRICING (tiered + prorated)
    ========================= */
 
-// weekend helper
 function isWeekend(d) {
   var day = d.getDay(); // 0=Sun..6=Sat
   return day === 0 || day === 6;
 }
 
-// return hourly rate in USD cents for a given local Date
 function rateCentsAt(date) {
   var h = date.getHours();
   var m = date.getMinutes();
@@ -142,44 +167,31 @@ function rateCentsAt(date) {
   var wknd = isWeekend(date);
 
   if (!wknd) {
-    // Weekdays (Mon–Fri)
-    // 5:35–6:35 = $250/hr
-    if (t >= (5*60+35) && t < (6*60+35)) return 25000;
-    // 6:35–15:45 = $495/hr
-    if (t >= (6*60+35) && t < (15*60+45)) return 49500;
-    // 15:45–21:45 = $945/hr
-    if (t >= (15*60+45) && t < (21*60+45)) return 94500;
-    // 21:45–22:45 = $495/hr
-    if (t >= (21*60+45) && t < (22*60+45)) return 49500;
+    if (t >= (5 * 60 + 35) && t < (6 * 60 + 35)) return 25000;
+    if (t >= (6 * 60 + 35) && t < (15 * 60 + 45)) return 49500;
+    if (t >= (15 * 60 + 45) && t < (21 * 60 + 45)) return 94500;
+    if (t >= (21 * 60 + 45) && t < (22 * 60 + 45)) return 49500;
     return 0;
   }
-
-  // Weekends (Sat–Sun)
-  // 5:50–6:50 = $250/hr
-  if (t >= (5*60+50) && t < (6*60+50)) return 25000;
-  // 6:50–21:45 = $945/hr
-  if (t >= (6*60+50) && t < (21*60+45)) return 94500;
-  // 21:45–22:45 = $495/hr
-  if (t >= (21*60+45) && t < (22*60+45)) return 49500;
-
+  if (t >= (5 * 60 + 50) && t < (6 * 60 + 50)) return 25000;
+  if (t >= (6 * 60 + 50) && t < (21 * 60 + 45)) return 94500;
+  if (t >= (21 * 60 + 45) && t < (22 * 60 + 45)) return 49500;
   return 0;
 }
 
-// Price any interval [startISO, endISO) in integer cents, prorated per minute.
 function priceIntervalCents(startISO, endISO) {
   var start = new Date(startISO);
   var end = new Date(endISO);
   if (!(start instanceof Date) || !(end instanceof Date) || isNaN(start) || isNaN(end) || end <= start) {
     return 0;
   }
-
   var total = 0;
   var cur = new Date(start);
   while (cur < end) {
-    var next = new Date(cur.getTime() + 60 * 1000); // +1 minute
+    var next = new Date(cur.getTime() + 60 * 1000);
     var activeRate = rateCentsAt(cur);
     if (activeRate > 0) {
-      total += Math.round(activeRate / 60); // per-minute cents
+      total += Math.round(activeRate / 60);
     }
     cur.setTime(next.getTime());
   }
@@ -187,21 +199,14 @@ function priceIntervalCents(startISO, endISO) {
 }
 
 /* ==========================================
-   Expand VEVENT into segments:
-   - 60-minute blocks starting at event.start
-   - plus a final remainder block if remainder >= 40 minutes
-   - if total duration is 40–59 minutes, return a single block
+   Expand VEVENT into segments (>=40 minutes)
    ========================================== */
 function expandIntoSegments40(startDate, endDate) {
   var s = new Date(startDate);
   var e = new Date(endDate);
   var out = [];
-
   var totalMs = e - s;
-  if (totalMs < 40 * 60 * 1000) {
-    // shorter than 40 min => not offered
-    return out;
-  }
+  if (totalMs < 40 * 60 * 1000) return out;
 
   var cur = new Date(s);
   var oneHourMs = 60 * 60 * 1000;
@@ -209,20 +214,35 @@ function expandIntoSegments40(startDate, endDate) {
   while (cur < e) {
     var nxt = new Date(cur.getTime() + oneHourMs);
     if (nxt <= e) {
-      // full 60-min chunk fits
       out.push({ start: new Date(cur), end: new Date(nxt) });
       cur = nxt;
     } else {
-      // remainder
       var remMs = e - cur;
-      if (remMs >= 40 * 60 * 1000) {
-        out.push({ start: new Date(cur), end: new Date(e) });
-      }
+      if (remMs >= 40 * 60 * 1000) out.push({ start: new Date(cur), end: new Date(e) });
       break;
     }
   }
-
   return out;
+}
+
+/* ============
+   AES-GCM PII
+   ============ */
+function getKey() {
+  const raw = (PII_ENC_KEY || '').trim();
+  if (!raw.startsWith('base64:')) throw new Error('PII_ENC_KEY must start with base64:');
+  const buf = Buffer.from(raw.slice(7), 'base64');
+  if (buf.length !== 32) throw new Error('PII_ENC_KEY must decode to 32 bytes');
+  return buf;
+}
+function encPII(plaintext) {
+  if (!plaintext) return null;
+  const key = getKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, ct]).toString('base64'); // iv|tag|cipher
 }
 
 /* =================
@@ -231,7 +251,6 @@ function expandIntoSegments40(startDate, endDate) {
 function fmtUSDFromCents(cents) {
   return (cents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' });
 }
-
 function fmtWhen(startISO, endISO) {
   const start = new Date(startISO);
   const end = new Date(endISO);
@@ -286,7 +305,7 @@ async function sendBookingEmail({ to, whenText, amountText }) {
   throw new Error('No mail provider configured');
 }
 
-// GET /api/slots — parse ICS, expand segments, filter by holds/bookings, include price_cents
+// GET /api/slots
 app.get('/api/slots', async function (_req, res) {
   var t0 = Date.now();
   try {
@@ -314,7 +333,7 @@ app.get('/api/slots', async function (_req, res) {
     for (var i = 0; i < vevents.length; i++) {
       var ev = vevents[i];
       if (!ev.start || !ev.end) continue;
-      if (ev.end <= now) continue; // past
+      if (ev.end <= now) continue;
 
       var segs = expandIntoSegments40(ev.start, ev.end);
       for (var j = 0; j < segs.length; j++) {
@@ -325,7 +344,7 @@ app.get('/api/slots', async function (_req, res) {
           title: 'Available Ice',
           start: b.start,
           end: b.end,
-          price_cents: priceIntervalCents(b.start, b.end) // ⬅️ prorated slot price
+          price_cents: priceIntervalCents(b.start, b.end)
         });
       }
     }
@@ -336,13 +355,11 @@ app.get('/api/slots', async function (_req, res) {
       return res.json(expanded);
     }
 
-    // Remove booked segments
     var bookedResp = await supabase.from('bookings').select('slot_id');
     if (bookedResp.error) console.error('[SLOTS] bookings error:', bookedResp.error.message);
     var bookedSet = new Set((bookedResp.data || []).map(function (r) { return r.slot_id; }));
     console.log('[SLOTS] Booked segment-ids: ' + bookedSet.size);
 
-    // Remove active holds
     var holdsResp = await supabase
       .from('slot_holds')
       .select('slot_id, expires_at')
@@ -361,31 +378,39 @@ app.get('/api/slots', async function (_req, res) {
   }
 });
 
+// ===== Validation schema for checkout
+const CreateCheckoutSchema = z.object({
+  slotId: z.string().min(6),
+  start: z.string().datetime(),
+  end: z.string().datetime(),
+  name: z.string().min(1).max(120),
+  email: z.string().email(),
+  purpose: z.string().max(200).optional()
+});
+
 // Create checkout — charge exact per-slot price (tiered, prorated)
 app.post('/api/create-checkout-session', async function (req, res) {
   try {
     if (!stripe) return res.status(500).json({ error: 'Stripe not configured (STRIPE_SECRET_KEY missing)' });
     if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
 
-    var body = req.body || {};
-    var sid = body.slotId;
-    var start = body.start;
-    var end = body.end;
-    var name = body.name;
-    var email = body.email;
-    var purpose = body.purpose;
+    const parse = CreateCheckoutSchema.safeParse(req.body || {});
+    if (!parse.success) {
+      return res.status(400).json({ error: 'Invalid payload', details: parse.error.flatten() });
+    }
 
-    console.log('[CHECKOUT] Start', { sid: sid, start: start, end: end, email: email });
+    const { slotId: sid, start, end, name, email, purpose } = parse.data;
+    console.log('[CHECKOUT] Start', { sid, start, end, email });
 
     // Already booked?
-    var existing = await supabase.from('bookings').select('slot_id').eq('slot_id', sid).maybeSingle();
+    const existing = await supabase.from('bookings').select('slot_id').eq('slot_id', sid).maybeSingle();
     if (existing && existing.data) {
       console.warn('[CHECKOUT] Slot already booked', sid);
       return res.status(409).json({ error: 'Slot already booked' });
     }
 
     // Active hold?
-    var activeHold = await supabase
+    const activeHold = await supabase
       .from('slot_holds')
       .select('*')
       .eq('slot_id', sid)
@@ -396,43 +421,47 @@ app.post('/api/create-checkout-session', async function (req, res) {
       return res.status(409).json({ error: 'Slot currently on hold' });
     }
 
-    var expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
     // PRICE: compute exact cents for this slot
-    var amountCents = priceIntervalCents(start, end);
+    const amountCents = priceIntervalCents(start, end);
     if (amountCents <= 0) {
       return res.status(400).json({ error: 'Selected slot is not billable.' });
     }
 
-    var session = await stripe.checkout.sessions.create({
+    // Description made deterministic (ISO strings) to avoid subtle variations
+    const description =
+      (purpose || 'Ice Time') +
+      ' • ' +
+      new Date(start).toISOString() +
+      ' – ' +
+      new Date(end).toISOString();
+
+    // Create the Stripe Checkout Session (no custom idempotency key to avoid 400s)
+    const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       payment_method_types: ['card'],
       success_url: SUCCESS_URL + '?session_id={CHECKOUT_SESSION_ID}',
       cancel_url: CANCEL_URL,
       customer_email: email,
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: 'Private Ice Rental',
-              description: (purpose || 'Ice Time') + ' • ' +
-                new Date(start).toLocaleString() + ' – ' + new Date(end).toLocaleTimeString()
-            },
-            unit_amount: amountCents
-          },
-          quantity: 1
-        }
-      ],
-      metadata: { slot_id: sid, start: start, end: end, name: name, email: email, purpose: purpose || '' }
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: { name: 'Private Ice Rental', description },
+          unit_amount: amountCents
+        },
+        quantity: 1
+      }],
+      metadata: { slot_id: sid, start, end, name, email, purpose: purpose || '' }
     });
 
+    // Record a hold so the slot can't be double-booked during checkout
     await supabase.from('slot_holds').insert({
       slot_id: sid,
       start_ts: new Date(start).toISOString(),
       end_ts: new Date(end).toISOString(),
-      customer_name: name,
-      customer_email: email,
+      customer_name: encPII(name),
+      customer_email: encPII(email),
       expires_at: expiresAt,
       checkout_session_id: session.id
     });
@@ -445,14 +474,84 @@ app.post('/api/create-checkout-session', async function (req, res) {
   }
 });
 
+// ---- TEMP: SMTP test route (remove after testing) ----
+app.post('/api/dev/test-email', async (req, res) => {
+  try {
+    const whenText = 'Thu Oct 24, 7:00 PM – 8:00 PM';
+    const amountText = '$100.00';
+    const to = ADMIN_EMAIL || SMTP_USER;
+    const id = await sendBookingEmail({ to, whenText, amountText });
+    console.log('[MAIL] Test email sent to', to, 'id:', id);
+    res.json({ ok: true, to, id });
+  } catch (e) {
+    console.error('[MAIL] Test send failed:', e?.message || e);
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
+
+// ---- Fallback confirmation endpoint (call from success page with session_id) ----
+app.post('/api/checkout/confirm', bodyParser.json(), async (req, res) => {
+  try {
+    const { session_id } = req.body || {};
+    if (!stripe || !session_id) return res.status(400).json({ error: 'Missing session_id' });
+
+    const verifiedSession = await stripe.checkout.sessions.retrieve(session_id, { expand: ['payment_intent'] });
+    const md = verifiedSession.metadata || {};
+    const sid = md.slot_id;
+    const start = md.start;
+    const end = md.end;
+    const name = md.name;
+    const email =
+      verifiedSession.customer_details?.email ||
+      verifiedSession.customer_email ||
+      md.email || null;
+    console.log('[CONFIRM] Email resolved:', email);
+
+    const amountTotal = verifiedSession.amount_total || 0;
+    const currency = verifiedSession.currency || 'usd';
+    const paymentIntentId = typeof verifiedSession.payment_intent === 'object'
+      ? verifiedSession.payment_intent.id
+      : verifiedSession.payment_intent;
+
+    if (supabase) {
+      const existing = await supabase.from('bookings').select('slot_id').eq('slot_id', sid).maybeSingle();
+      if (!(existing && existing.data)) {
+        await supabase.from('bookings').insert({
+          slot_id: sid,
+          start_ts: new Date(start).toISOString(),
+          end_ts: new Date(end).toISOString(),
+          customer_name: encPII(name),
+          customer_email: encPII(email),
+          amount_cents: amountTotal,
+          currency,
+          stripe_payment_intent: paymentIntentId
+        });
+      }
+      await supabase.from('slot_holds').delete().eq('slot_id', sid);
+    }
+
+    const whenText = fmtWhen(start, end);
+    const amountText = fmtUSDFromCents(amountTotal);
+    if (email) await sendBookingEmail({ to: email, whenText, amountText });
+    if (ADMIN_EMAIL) await sendBookingEmail({ to: ADMIN_EMAIL, whenText, amountText });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[CONFIRM] Error:', e?.message || e);
+    return res.status(500).json({ error: 'Failed to confirm session' });
+  }
+});
+
 // Stripe webhook
 app.post('/api/stripe/webhook', bodyParser.raw({ type: 'application/json' }), async function (req, res) {
   if (!stripe || !STRIPE_WEBHOOK_SECRET) {
     console.error('[WEBHOOK] Not configured: hasStripe?', !!stripe, 'hasSecret?', !!STRIPE_WEBHOOK_SECRET);
     return res.status(500).json({ error: 'Webhook not configured' });
   }
-  var sig = req.headers['stripe-signature'];
-  var event;
+  console.log('[WEBHOOK] Hit', new Date().toISOString());
+
+  const sig = req.headers['stripe-signature'];
+  let event;
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
   } catch (err) {
@@ -463,27 +562,47 @@ app.post('/api/stripe/webhook', bodyParser.raw({ type: 'application/json' }), as
   console.log('[WEBHOOK] Event:', event && event.type ? event.type : '(no type)');
 
   if (event && event.type === 'checkout.session.completed') {
-    var session = event.data.object;
-    var md = (session && session.metadata) ? session.metadata : {};
-    var sid = md.slot_id;
-    var start = md.start;
-    var end = md.end;
-    var name = md.name;
-    var email = md.email;
+    const session = event.data.object;
+
+    // Fetch the full session from Stripe to verify details
+    let verifiedSession;
+    try {
+      verifiedSession = await stripe.checkout.sessions.retrieve(session.id, { expand: ['payment_intent'] });
+    } catch (e) {
+      console.error('[WEBHOOK] Failed to retrieve session from Stripe:', e?.message || e);
+      return res.status(400).send('Unable to verify session.');
+    }
+
+    const md = verifiedSession.metadata || {};
+    const sid = md.slot_id;
+    const start = md.start;
+    const end = md.end;
+    const name = md.name;
+    const email =
+      verifiedSession.customer_details?.email ||
+      verifiedSession.customer_email ||
+      md.email || null;
+    console.log('[WEBHOOK] Email resolved:', email);
+
+    const amountTotal = verifiedSession.amount_total || 0;
+    const currency = verifiedSession.currency || 'usd';
+    const paymentIntentId = typeof verifiedSession.payment_intent === 'object'
+      ? verifiedSession.payment_intent.id
+      : verifiedSession.payment_intent;
 
     try {
       if (supabase) {
-        var existing = await supabase.from('bookings').select('slot_id').eq('slot_id', sid).maybeSingle();
+        const existing = await supabase.from('bookings').select('slot_id').eq('slot_id', sid).maybeSingle();
         if (!(existing && existing.data)) {
           await supabase.from('bookings').insert({
             slot_id: sid,
             start_ts: new Date(start).toISOString(),
             end_ts: new Date(end).toISOString(),
-            customer_name: name,
-            customer_email: email,
-            amount_cents: session.amount_total || 0,
-            currency: session.currency || 'usd',
-            stripe_payment_intent: session.payment_intent
+            customer_name: encPII(name),
+            customer_email: encPII(email),
+            amount_cents: amountTotal,
+            currency,
+            stripe_payment_intent: paymentIntentId
           });
           console.log('[WEBHOOK] Booking inserted for', sid);
         } else {
@@ -496,13 +615,13 @@ app.post('/api/stripe/webhook', bodyParser.raw({ type: 'application/json' }), as
       // ---- Send confirmation emails ----
       try {
         const whenText = fmtWhen(start, end);
-        const amountText = fmtUSDFromCents(session.amount_total || 0);
+        const amountText = fmtUSDFromCents(amountTotal);
 
         if (email) {
           const id1 = await sendBookingEmail({ to: email, whenText, amountText });
           console.log('[MAIL] Confirmation sent to', email, 'id:', id1);
         } else {
-          console.warn('[MAIL] No customer email in session metadata.');
+          console.warn('[MAIL] No customer email on session.');
         }
 
         if (ADMIN_EMAIL) {

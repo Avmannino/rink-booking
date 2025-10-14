@@ -13,11 +13,14 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
     "luxon": "^3.7.2",
     "node-ical": "^0.17.0",
     "nodemailer": "^7.0.6",
     "resend": "^6.1.2",
-    "stripe": "^16.0.0"
+    "stripe": "^16.0.0",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
