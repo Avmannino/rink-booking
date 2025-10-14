@@ -1,4 +1,22 @@
 /* calendar.css */
+
+/* ===== Global resets & guards ===== */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+img, svg, video, canvas {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
 /* ===== Layout: mini calendar left, main calendar right ===== */
 .pageWrap {
   display: grid;
@@ -8,33 +26,21 @@
   background: #0b1220;
   min-height: 100vh;
   color: #e5e7eb;
+  overflow-x: hidden;            /* guard against any inner drift */
+  max-width: 100%;
 }
-html, body {
-  width: 100%;
-  overflow-x: hidden;
-}
-.miniWrap {
-  background: #0f172a;
-  border: 1px solid #1f2a44;
-  border-radius: 12px;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
-  padding: 14px 10px 10px;
-  height: fit-content;
-  margin-top: 40px;
-  position: relative;
-  left: 0.3vw;
-}
+
+/* LEFT COLUMN – stable, centered stack */
 .leftCol {
   display: flex;
   flex-direction: column;
-  position: relative;
-  top: 15vh;
-  right: .5vw;
-  height: fit-content;
-  margin-top: 10px;
-  gap: 10px;
+  align-self: start;
+  gap: 14px;
+  position: sticky;              /* stays in view on desktop */
+  top: 22px;
 }
-/* Logo */
+
+/* Logo card */
 .miniLogoWrap {
   display: flex;
   align-items: center;
@@ -43,16 +49,54 @@ html, body {
   border: 1px solid #1f2a44;
   border-radius: 12px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
-  padding: 10px 8px;
+  padding: 16px 12px;
 }
+
+/* Scalable logo */
 .miniLogo {
-  max-width: 130px;
-  display: flex;
-  align-self: center;
-  position: sticky;
-  margin-bottom: -20px;
-  margin-top: -150px;
+  width: 100%;
+  max-width: clamp(90px, 28vw, 130px);
+  margin: 5% auto;                /* centered */
+  margin-left: 50px;
+  margin-bottom: 10px;
+  margin-top: -10px;
 }
+
+/* Mini calendar card */
+.miniWrap {
+  background: #0f172a;
+  border: 1px solid #1f2a44;
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
+  padding: 14px 10px 10px;
+  height: fit-content;
+  position: relative;
+}
+
+/* Carousel card */
+.carousel {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #0f172a;
+  border: 1px solid #1f2a44;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
+  width: 100%;
+  max-width: 100%;
+}
+.carouselTrack { display: flex; width: 100%; transition: transform 500ms ease; }
+.carouselSlide { min-width: 100%; aspect-ratio: 16 / 10; display: grid; place-items: center; background: #0b1220; }
+.carouselSlide img { width: 100%; height: 100%; object-fit: contain; }
+.carouselDots {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: 8px; display: flex; gap: 8px;
+}
+.carouselDots .dot {
+  width: 9px; height: 9px; border-radius: 999px; border: 1px solid #94a3b8; background: transparent; cursor: pointer;
+}
+.carouselDots .dot.active { background: #94a3b8; }
+
 /* Mini calendar header */
 .miniHeaderBar {
   display: grid;
@@ -75,20 +119,19 @@ html, body {
   align-items: center;
   justify-content: center;
   width: 40px;
-  height: 20px;
+  height: 24px;
   padding: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid #334155;
   background: #1f2a44;
   color: #cbd5e1;
   cursor: pointer;
-  font-size: 25px;
+  font-size: 20px;
   line-height: 1;
 }
 .miniHeaderBtn:hover { background: #24304e; }
-.miniHeader { font-weight: 700; font-size: 14px; color: #93c5fd; padding: 0 6px 8px; border-bottom: 1px solid #1f2a44; margin-bottom: 8px; }
 
-/* Main calendar container */
+/* ===== Main calendar container ===== */
 .mainWrap {
   position: relative;
   min-width: 0;
@@ -99,7 +142,9 @@ html, body {
   box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
   padding: 16px 36px 22px 16px;
   box-sizing: border-box;
-  overflow-x: clip;
+  overflow: hidden;            /* clip inner overflow */
+  display: flex;
+  flex-direction: column;
 }
 
 /* Title + nav */
@@ -107,7 +152,8 @@ html, body {
   text-align: center;
   margin: 4px 0 8px;
   font-weight: 800;
-  font-size: 36px;
+  font-size: clamp(20px, 5.2vw, 36px);
+  line-height: 1.15;
   color: #f1f5f9;
 }
 .centerNav {
@@ -129,8 +175,6 @@ html, body {
   color: #cbd5e1;
   border-radius: 10px;
   cursor: pointer;
-  position: relative;
-  top: 1.2vh;
   font-size: 26px;
   line-height: 1;
 }
@@ -139,8 +183,6 @@ html, body {
   font-weight: 700;
   letter-spacing: .2px;
   color: #e2e8f0;
-  position: relative;
-  top: 1.2vh;
   font-size: 22px;
 }
 
@@ -161,7 +203,7 @@ html, body {
 
 .loading { color: #94a3b8; text-align: center; }
 
-/* ===== FullCalendar theme & sizing ===== */
+/* ===== FullCalendar theme & HARD width clamps ===== */
 .fc {
   --fc-border-color: #1f2a44;
   --fc-page-bg-color: #0f172a;
@@ -172,20 +214,22 @@ html, body {
   --fc-event-text-color: #e5e7eb;
   width: 100%;
   max-width: 100%;
-  box-sizing: border-box;
 }
-.mainWrap .fc .fc-scrollgrid {
-  width: 100% !important;
-  max-width: 100%;
-  table-layout: fixed;
-  box-sizing: border-box;
-}
+
+.mainWrap .fc { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+.mainWrap .fc .fc-scrollgrid,
+.mainWrap .fc table { width: 100% !important; max-width: 100% !important; table-layout: fixed; }
 .mainWrap .fc .fc-view-harness,
-.mainWrap .fc .fc-scroller {
-  width: 100% !important;
-  max-width: 100%;
-  box-sizing: border-box;
-}
+.mainWrap .fc .fc-scroller { width: 100% !important; max-width: 100% !important; overflow: auto; }
+
+/* This kills the infamous 1–2px overflow on mobile caused by inner min-widths */
+.fc .fc-view-harness,
+.fc .fc-scrollgrid,
+.fc .fc-scroller,
+.fc .fc-timegrid,
+.fc .fc-daygrid { max-width: 100% !important; }
+
+/* Header */
 .fc .fc-toolbar.fc-header-toolbar {
   border-bottom: 1px solid #1f2a44;
   margin-bottom: 8px;
@@ -222,7 +266,7 @@ html, body {
   border-right: 1px solid #1f2a44;
   border-bottom: 1px solid #1f2a44;
 }
-.mainWrap .fc .fc-daygrid-day.fc-day-today { background: #ffffff; }
+.mainWrap .fc .fc-daygrid-day.fc-day-today { background: rgba(96, 165, 250, .08); }
 .mainWrap .fc .fc-daygrid-day-top a { color: #93c5fd; }
 
 /* Event label */
@@ -240,7 +284,7 @@ html, body {
   font-size: 12px;
 }
 
-/* Mini calendar look */
+/* Mini calendar (FullCalendar) look */
 .miniWrap .fc { --fc-border-color: #1f2a44; --fc-page-bg-color: #0f172a; }
 .miniWrap .fc .fc-col-header-cell-cushion {
   font-size: 12px; font-weight: 700; color: #93c5fd;
@@ -255,13 +299,10 @@ html, body {
 .miniWrap .fc .fc-view-harness { height: auto !important; }
 .miniWrap .fc .fc-scroller { overflow: visible !important; }
 .miniWrap .fc .fc-daygrid-body { height: auto !important; }
-.miniWrap .fc .fc-scrollgrid { height: auto !important; border: 0; }
+.miniWrap .fc .fc-scrollgrid { height: auto !important; border: 0; width: 100% !important; max-width: 100% !important; }
 .miniWrap .fc .fc-view-harness,
 .miniWrap .fc .fc-daygrid-body,
-.miniWrap .fc table { background: transparent; }
-
-/* Month TODAY tint on main calendar */
-.mainWrap .fc .fc-daygrid-day.fc-day-today { background: rgba(96, 165, 250, .08); }
+.miniWrap .fc table { background: transparent; width: 100% !important; max-width: 100% !important; }
 
 /* Tooltip rounded corners (animation handled inline) */
 .slot-tooltip { border-radius: 10px; }
@@ -273,32 +314,7 @@ html, body {
 *::-webkit-scrollbar-thumb { background: #334155; border-radius: 8px; }
 *::-webkit-scrollbar-thumb:hover { background: #3f4c6b; }
 
-/* Carousel */
-.carousel {
-  position: relative;
-  top: 2vh;
-  left: 0.3vw;
-  display: flex;
-  align-self: center;
-  overflow: hidden;
-  border-radius: 12px;
-  background: #0f172a;
-  border: 1px solid #1f2a44;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
-}
-.carouselTrack { display: flex; width: 100%; transition: transform 500ms ease; }
-.carouselSlide { min-width: 100%; aspect-ratio: 16 / 10; display: grid; place-items: center; background: #0b1220; }
-.carouselSlide img { width: 100%; height: 100%; object-fit: contain; }
-.carouselDots {
-  position: absolute; left: 50%; transform: translateX(-50%);
-  bottom: 8px; display: flex; gap: 8px;
-}
-.carouselDots .dot {
-  width: 9px; height: 9px; border-radius: 999px; border: 1px solid #94a3b8; background: transparent; cursor: pointer;
-}
-.carouselDots .dot.active { background: #94a3b8; }
-
-/* Additional Info trigger + modal (from earlier) */
+/* Additional Info trigger + modal */
 .additionalInfoTrigger {
   position: absolute;
   left: 25px;
@@ -348,147 +364,80 @@ html, body {
 .ai-accordionItem summary::-webkit-details-marker { display: none; }
 
 /* ====== RESPONSIVE BREAKPOINTS ====== */
+@media (max-width: 1400px) {
+  .pageWrap { grid-template-columns: 240px minmax(0, 1fr); }
+  .mainWrap { padding-right: 34px; }
+}
+@media (max-width: 1200px) {
+  .pageWrap { grid-template-columns: 220px minmax(0, 1fr); gap: 14px; }
+}
+
+/* Tablet/phone stack */
 @media (max-width: 980px) {
   .pageWrap { grid-template-columns: 1fr; gap: 14px; padding: 14px; }
-  .leftCol { order: 1; top: 0; right: 0; }
-  .mainWrap { order: 2; padding: 12px 12px 16px; }
-  .title { font-size: 26px; margin-top: 4px; }
-  .currentMonth { font-size: 18px; top: 0; }
-  .navBtn { width: 38px; height: 34px; font-size: 22px; top: 0; }
+  .leftCol { position: static; top: 0; }
+
+  /* Mobile fine-tuning for the brand block */
+  .miniLogoWrap { padding: 12px 10px; }
+  .miniLogo { max-width: clamp(84px, 26vw, 40px); margin: 0 auto 6px; }
+  .carousel { display: none; } /* optional: hide on phones */
+
+  /* Keep main calendar visible; set to none to hide if desired */
+  .mainWrap { padding: 12px; display: block; }
+
+  /* Scalable page title on mobile */
+  .title { font-size: clamp(18px, 5vw, 22px); margin-top: -5px; }
+  .currentMonth { font-size: 18px; }
+  .navBtn { width: 38px; height: 34px; font-size: 22px; }
   .viewBtns { gap: 10px; }
   .viewBtn { padding: 6px 10px; font-size: 12px; border-radius: 6px; }
-  .miniLogo { position: static; max-width: 160px; margin: 0 auto 8px; display: block; }
-  .carousel { display: none; } /* optional: hide on phones */
-  .additionalInfoTrigger { left: 8px; top: 62px; font-size: 16px; padding: 3px 6px; }
-  .fc .fc-timegrid-axis-cushion { font-size: 11px; }
-  .mainWrap .fc .fc-timegrid-slot { height: 26px !important; max-height: 26px !important; }
-}
-@media (max-width: 1400px) {
-  .pageWrap { grid-template-columns: 240px minmax(0, 1fr); }
-  .mainWrap { padding-right: 34px; }
-}
-@media (max-width: 1200px) {
-  .pageWrap { grid-template-columns: 220px minmax(0, 1fr); gap: 14px; }
-}
 
-/* ...everything you already had above remains the same... */
-/* ====== RESPONSIVE BREAKPOINTS ====== */
-@media (max-width: 1400px) {
-  .pageWrap { grid-template-columns: 240px minmax(0, 1fr); }
-  .mainWrap { padding-right: 34px; }
-}
-@media (max-width: 1200px) {
-  .pageWrap { grid-template-columns: 220px minmax(0, 1fr); gap: 14px; }
-}
-
-/* PHONE LAYOUT */
-@media (max-width: 980px) {
-  .pageWrap { grid-template-columns: 1fr; gap: 14px; padding: 14px; }
-  .leftCol { order: 1; top: 0; right: 0; }
-  .mainWrap { display: none; } /* ← hide main calendar on mobile */
-
-  /* show a heading above mini cal */
-  .mobileTitle {
-    font-size: 22px;
-    text-align: center;
-    margin-bottom: 20px;
-    margin-top: -65px;
+  /* Mobile: make mini card full width & prevent overflow */
+  .miniWrap {
+    position: static;
+    margin-top: 0;
+    padding: 12px;
+    border-radius: 14px;
+    align-self: stretch;
+    width: 100%;
+    max-width: 100%;
   }
 
-  /* Make mini calendar large & comfy */
-  .miniWrap { padding: 12px; border-radius: 14px; margin-bottom: 5px; position: relative; display: flex; align-self: center; left: 0.3vw; }
   .miniHeaderBar { grid-template-columns: 44px 1fr 44px; gap: 8px; padding: 0 6px 10px 6px; margin-bottom: 10px; }
-  .miniHeaderBtn { width: 44px; height: 28px; font-size: 26px; }
+  .miniHeaderBtn { width: 44px; height: 28px; font-size: 24px; }
   .miniHeaderTitle { font-size: 18px; }
 
-  /* Bigger weekday row */
-  .miniWrap .fc .fc-col-header-cell-cushion { font-size: 13px; padding: 6px 0; }
-
-  /* Bigger month cells */
-  .miniWrap .fc .fc-daygrid-day-frame { min-height: 64px !important; /* taller */ max-height: none !important; padding: 6px 6px; }
-  .miniWrap .fc .fc-daygrid-day-number { font-size: 16px; font-weight: 800; }
-
-  /* Slightly larger grid lines for clarity */
+  .miniWrap .fc .fc-col-header-cell-cushion { font-size: 23px; padding: 6px 0; }
+  .miniWrap .fc .fc-daygrid-day-frame { min-height: 64px !important; max-height: none !important; padding: 6px 6px; }
+  .miniWrap .fc .fc-daygrid-day-number { font-size: 18px; font-weight: 800; }
   .miniWrap .fc .fc-daygrid-day { border-right: 1px solid #24314f; border-bottom: 1px solid #24314f; }
 
-  /* mini selected / today styling kept */
-  .miniWrap .fc .miniSelected .fc-daygrid-day-frame { border-radius: 8px; }
+  /* Absolute clamp to viewport to kill right-side creep */
+  .pageWrap, .leftCol, .miniWrap, .mainWrap, .fc { max-width: 100vw; overflow-x: hidden; }
 
-  .miniLogo { position: relative; top: -3.5vh; max-width: 140px; margin: 0 auto 6px; display: block; }
-
-  /* Hide carousel on phones (keeps things clean) */
-  .carousel { display: none; }
-
-  /* Tweak body typography around */
-  .title { font-size: 26px; }
-  .currentMonth { font-size: 18px; top: 0; }
-  .navBtn { width: 38px; height: 34px; font-size: 22px; top: 0; }
-  .viewBtns { gap: 10px; }
-  .viewBtn { padding: 6px 10px; font-size: 12px; border-radius: 6px; }
-}
-
-/* --- Mobile inline Day View (only visible under 980px) --- */
-@media (max-width: 980px) {
-  .mobileDayWrap {
-    margin-top: -70px;
-    background: #0f172a;
-    border: 1px solid #1f2a44;
-    border-radius: 12px;
-    padding: 10px;
-    box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
+  /* === Center & enlarge the DAY header (mobile only) === */
+  .mainWrap .fc .fc-toolbar.fc-header-toolbar { 
+    justify-content: center !important; 
   }
-  /* Mobile day header layout */
-  .mobileDayHeader {
-    display: grid;
-    grid-template-columns: 48px 1fr 48px; /* left control | centered title | right spacer */
-    align-items: center;
-    column-gap: 8px;
-    padding: 8px 12px;
+  .mainWrap .fc .fc-toolbar-title {
+    margin: 0 auto !important;
+    text-align: center !important;
+    font-size: clamp(20px, 6vw, 26px) !important;
+    line-height: 1.2 !important;
+    display: block !important;
+    width: 100% !important;
   }
-  /* Back button size so it matches the right spacer width */
-  .mobileBackBtn {
-    appearance: none;
-    border: 1px solid #ffffff5e;
-    background: #24314f;
-    color: #93c5fd;
-    font-weight: 700;
-    font-size: 16px;
-    padding: 3px 0px;
-    cursor: pointer;
-  }
-  .mobileBackBtn:hover { background: #24304e; }
 
+  /* === Center the Additional Info trigger under the logo (mobile only) === */
   .additionalInfoTrigger {
-    position: absolute;
-    display: inline-block;
-    margin: 4px 0 10px;
-    font-size: 16px;
-    padding: 14px 6px;
-    left: auto;
-    bottom: -90vh;
-    align-self: center;
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    display: block !important;
+    margin: 10px auto 12px !important;  /* sits under the logo */
+    text-align: center !important;
+    font-size: 18px !important;
   }
-
-  /* The title stays perfectly centered regardless of left content */
-  .mobileDayTitle {
-    justify-self: center;
-    text-align: center;
-    font-weight: 700;
-    font-size: 20px;
-    color: #e5e7eb;
-    line-height: 1.2;
-    margin-left: 30px;
-    margin-top: -15px;
-  }
-  /* Invisible placeholder to balance the grid */
-  .mobileHeaderSpacer { width: 48px; height: 1px; /* keep it non-intrusive */ }
-
-  /* Mini month: color date numbers by availability (mobile only) */
-  .miniWrap .fc .hasAvail .fc-daygrid-day-number { color: #22c55e !important; /* green */ font-weight: 800; }
-  .miniWrap .fc .noAvail .fc-daygrid-day-number { color: #ef4444 !important; /* red */ font-weight: 800; }
-
-  .miniWrap .hasAvail .fc-daygrid-day-number { color: #22c55e !important; font-weight: 800; }
-  .miniWrap .noAvail .fc-daygrid-day-number { color: #ef4444 !important; font-weight: 800; }
 }
 
 /* ===== New “card” accordion look ===== */
@@ -530,11 +479,11 @@ html, body {
   border-radius: 6px; background: #171f33; color: #e5e7eb; font-size: 16px; line-height: 1;
 }
 .ai2-panel {
-  display: grid; grid-template-rows: 0fr; /* animated with inline style */
+  display: grid; grid-template-rows: 0fr;
   transition: grid-template-rows 220ms ease; background: #0f172a;
 }
 .ai2-panel-inner {
-  overflow: hidden; padding: 0 16px 14px 16px; /* only visible when open */
+  overflow: hidden; padding: 0 16px 14px 16px;
   color: #cbd5e1; line-height: 1.6; border-top: 1px solid #1f2a44;
 }
 .ai2-footer {
