@@ -44,11 +44,11 @@ html, body {
   padding: 10px 8px;
 }
 .miniLogo {
-  max-width: 230px;
+  max-width: 260px;
   height: auto;
   position: absolute;
-  top: -20vh;
-  left: 1vw;
+  top: -21.5vh;
+  left: 0vw;
 }
 /* Mini calendar header */
 .miniHeaderBar {
