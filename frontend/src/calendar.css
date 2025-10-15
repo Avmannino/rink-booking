@@ -274,14 +274,19 @@ img, svg, video, canvas {
   width: 100%;
   height: 100%;
   display: flex;
-  align-items: center;
+  align-items:center;
   justify-content: center;
   text-align: center;
   padding: 2px 6px;
   line-height: 1.25;
   white-space: normal;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 13px;
+  transition: background-color 0.15s ease-in-out;
+}
+
+.eventText:hover {
+  background-color: rgb(2, 147, 115);
 }
 
 /* Mini calendar (FullCalendar) look */

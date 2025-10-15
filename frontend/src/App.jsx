@@ -29,7 +29,7 @@ function fmtEndTime(d) {
   return s.replace(':00', '');
 }
 function fmtDate(d) {
-  return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 function fmtUSD(n) {
   return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
@@ -40,14 +40,20 @@ function toYMD(d) {
 }
 
 // ===== HOLIDAY HELPERS (blackout) =====
+
+// Fixed-date holidays: New Year's Day (01-01), New Year's Eve (12-31),
+// Christmas Eve (12-24), Christmas Day (12-25)
 function isFixedHolidayYMD(ymd) {
   const mmdd = ymd.slice(5);
   return mmdd === '01-01' || mmdd === '12-31' || mmdd === '12-24' || mmdd === '12-25';
 }
+
+// Thanksgiving (USA): 4th Thursday in November
 function thanksgivingYMD(year) {
+  // Nov 1 UTC noon to avoid DST artifacts
   const d = new Date(Date.UTC(year, 10, 1, 12, 0, 0));
-  const day = d.getUTCDay();
-  const offsetToThursday = (4 - day + 7) % 7;
+  const day = d.getUTCDay(); // 0..6
+  const offsetToThursday = (4 - day + 7) % 7; // Thursday=4
   const firstThursday = 1 + offsetToThursday;
   const fourthThursday = firstThursday + 21;
   const y = d.getUTCFullYear();
@@ -55,12 +61,15 @@ function thanksgivingYMD(year) {
   const dd = String(fourthThursday).padStart(2, '0');
   return `${y}-${m}-${dd}`;
 }
+
 function isHolidayDateLocal(dateLocal) {
   const ymd = toYMD(dateLocal);
   if (isFixedHolidayYMD(ymd)) return true;
   const year = dateLocal.getFullYear();
   return ymd === thanksgivingYMD(year);
 }
+
+// Date helpers for overlap checks
 function startOfLocalDay(d) {
   const nd = new Date(d);
   nd.setHours(0, 0, 0, 0);
@@ -71,6 +80,8 @@ function addDaysLocal(d, days) {
   nd.setDate(nd.getDate() + days);
   return nd;
 }
+
+// Does [start, end) overlap any holiday local day?
 function overlapsHolidayLocal(start, end) {
   if (!(start instanceof Date) || !(end instanceof Date) || isNaN(start) || isNaN(end)) return false;
   if (end <= start) return false;
@@ -82,121 +93,14 @@ function overlapsHolidayLocal(start, end) {
   }
   return false;
 }
+
+// Real hover check (desktop only typically)
 const canHover = () =>
   typeof window !== 'undefined' &&
   window.matchMedia &&
   window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 
-/* =========================
-   Confirmation (full screen)
-   ========================= */
-function ConfirmationView({ apiBase }) {
-  const [state, setState] = useState({ loading: true, ok: false, when: '', amount: '', sessionId: '' });
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const sid = params.get('session_id');
-    async function confirm() {
-      try {
-        await axios.post(`${apiBase}/api/checkout/confirm`, { session_id: sid });
-        setState(s => ({ ...s, loading: false, ok: true, sessionId: sid || '' }));
-      } catch (e) {
-        console.error(e);
-        setState(s => ({ ...s, loading: false, ok: false, sessionId: sid || '' }));
-      }
-    }
-    if (sid) confirm();
-    else setState(s => ({ ...s, loading: false, ok: false }));
-  }, [apiBase]);
-
-  if (state.loading) {
-    return (
-      <div style={{position:'fixed', inset:0, display:'grid', placeItems:'center', background:'#0b1220', color:'#e5e7eb', zIndex:9999}}>
-        <div>Finalizing your booking…</div>
-      </div>
-    );
-  }
-
-  // Full-viewport overlay, independent of page grid
-  return (
-    <div style={{ position:'fixed', inset:0, background:'#0b1220', display:'grid', placeItems:'center', padding:'24px', zIndex:9999 }}>
-      <div style={{
-        width: 'min(900px, 96vw)',
-        background: '#0f172a',
-        border: '1px solid #1f2a44',
-        borderRadius: '14px',
-        boxShadow: '0 16px 36px rgba(0,0,0,.45)',
-        color: '#e5e7eb',
-        padding: '22px 24px 26px'
-      }}>
-        <div style={{display:'grid',placeItems:'center',gap:12,marginBottom:10}}>
-          <img src="/logo.png" alt="Wings Arena" style={{width:'90px',height:'auto'}} />
-          <h1 style={{margin:0,textAlign:'center',fontSize:'clamp(22px, 3.6vw, 34px)',lineHeight:1.2}}>
-            {state.ok ? 'Booking Confirmed - Get Ready to Glide!' : 'We could not verify your payment'}
-          </h1>
-        </div>
-
-        {state.ok ? (
-          <>
-            <div style={{border:'1px solid #23304e',borderRadius:10, padding:'14px 16px',margin:'14px 0', background:'#0b1326'}}>
-              <div style={{textAlign:'center',fontWeight:800,fontSize:'18px',color:'#bcd8ff'}}>
-                Your payment was received successfully.
-              </div>
-              <div style={{textAlign:'center',marginTop:6,opacity:.9,fontSize:14}}>
-                You’ll also receive a confirmation email shortly.
-              </div>
-            </div>
-
-            <div style={{display:'flex',gap:12,justifyContent:'center',flexWrap:'wrap',marginTop:10}}>
-              <button
-                onClick={() => window.print()}
-                style={{padding:'10px 16px',fontWeight:800,borderRadius:9999,background:'#2746ff',color:'#fff',border:'0',cursor:'pointer'}}
-              >
-                Print / Save as PDF
-              </button>
-              <button
-                onClick={() => { window.location.href = '/'; }}
-                style={{padding:'10px 16px',fontWeight:700,borderRadius:9999,background:'#1f2a44',color:'#e5e7eb',border:'1px solid #334155',cursor:'pointer'}}
-              >
-                Back to Calendar
-              </button>
-            </div>
-
-            {state.sessionId && (
-              <div style={{marginTop:14,textAlign:'center',opacity:.6,fontSize:12}}>
-                Confirmation Ref: {state.sessionId}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            <p style={{textAlign:'center',margin:'10px 0 16px'}}>Please contact support if funds were captured but the booking did not finalize.</p>
-            <div style={{display:'flex',justifyContent:'center'}}>
-              <button
-                onClick={() => { window.location.href = '/'; }}
-                style={{padding:'10px 16px',fontWeight:700,borderRadius:9999,background:'#1f2a44',color:'#e5e7eb',border:'1px solid #334155',cursor:'pointer'}}
-              >
-                Back to Calendar
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// =========================
-// Main Calendar Application
-// =========================
 export default function App() {
-  // Show confirmation whenever Stripe returns with a session_id
-  const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
-  const shouldShowConfirmation = Boolean(params.get('session_id'));
-  if (shouldShowConfirmation) {
-    return <ConfirmationView apiBase={API_BASE} />;
-  }
-
   const [events, setEvents] = useState([]);
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -235,11 +139,13 @@ export default function App() {
     if (api) api.gotoDate(mobileDayDate);
   }, [isMobile, mobileDayOpen, mobileDayDate]);
 
+  // Normalize events for FC
   const calendarEvents = useMemo(
     () => events.map((s) => ({ ...s, title: 'Available Ice' })),
     [events]
   );
 
+  // Set of YYYY-MM-DD that have at least one event (for mini-cal coloring)
   const availableDaysSet = useMemo(() => {
     const s = new Set();
     for (const ev of events) {
@@ -250,15 +156,19 @@ export default function App() {
     return s;
   }, [events]);
 
+  // Key to force the mini calendars to remount when availability changes
   const miniAvailKey = useMemo(
     () => Array.from(availableDaysSet).sort().join(','),
     [availableDaysSet]
   );
 
+  // Classnames for mini calendar cells (desktop + mobile)
   const getMiniDayCellClassNames = useCallback(
     (arg) => {
       const classes = ['miniCell'];
       const ymd = toYMD(arg.date);
+
+      // Only color days that belong to the visible month
       const inMonth =
         arg.view.currentStart.getMonth() === arg.date.getMonth() &&
         arg.view.currentStart.getFullYear() === arg.date.getFullYear();
@@ -272,6 +182,7 @@ export default function App() {
     [selectedMiniISO, availableDaysSet]
   );
 
+  // FORCE color on day numbers (handles theme specificity)
   const miniDayCellDidMount = useCallback((arg) => {
     const ymd = toYMD(arg.date);
     const numEl = arg.el.querySelector('.fc-daygrid-day-number');
@@ -282,7 +193,7 @@ export default function App() {
       arg.view.currentStart.getFullYear() === arg.date.getFullYear();
 
     if (!inMonth) {
-      numEl.style.color = '#64748b';
+      numEl.style.color = '#64748b'; // muted out-of-month
       return;
     }
 
@@ -314,11 +225,13 @@ export default function App() {
     })();
   }, []);
 
+  // Click on an event (both desktop & mobile day view)
   const handleEventClick = (info) => {
     const slot = events.find((e) => e.id === info.event.id);
     if (slot) setSelected(slot);
   };
 
+  // Event label
   const renderEventContent = (arg) => {
     const start = arg.event.start, end = arg.event.end;
     if (!start || !end) return null;
@@ -326,6 +239,7 @@ export default function App() {
     return <div className="eventText">{text}</div>;
   };
 
+  // Tooltip (desktop/hover devices only)
   const handleMouseEnter = (arg) => {
     if (!canHover()) return;
     arg.el.style.cursor = 'pointer';
@@ -430,33 +344,47 @@ export default function App() {
     if (api) api.changeView(viewName);
   };
 
+  // Clicking a day in the MAIN calendar's month view -> jump to that day's view
   const handleMainDateClick = useCallback((info) => {
     if (info.view.type !== 'dayGridMonth') return;
+
     const api = getApi();
     if (!api) return;
+
     api.gotoDate(info.date);
     api.changeView('timeGridDay');
+
     setCurrentView('timeGridDay');
     setCurrentDate(info.date);
     setSelectedMiniISO(toYMD(info.date));
     setCalTitle(api.view.title);
   }, []);
 
+  // POINTER + FULL-CELL OUTLINE on month day cells in MAIN calendar
   const handleMainDayCellDidMount = useCallback((arg) => {
     if (arg.view.type !== 'dayGridMonth') return;
-    const td = arg.el;
+
+    const td = arg.el; // the <td class="fc-daygrid-day">
     const frame = td.querySelector('.fc-daygrid-day-frame') || td;
+
+    // keep pointer on the main clickable surface
     frame.style.cursor = 'pointer';
+
     const onEnter = () => {
+      // Outline the entire grid cell (not just event area)
       td.style.outline = '2px solid #334155';
-      td.style.outlineOffset = '-1px';
+      td.style.outlineOffset = '-1px'; // sit neatly inside existing borders
     };
     const onLeave = () => {
       td.style.outline = '';
       td.style.outlineOffset = '';
     };
+
+    // Attach to the cell so the whole box triggers the effect
     td.addEventListener('mouseenter', onEnter);
     td.addEventListener('mouseleave', onLeave);
+
+    // store for cleanup
     td._monthHoverEnter = onEnter;
     td._monthHoverLeave = onLeave;
   }, []);
@@ -464,6 +392,7 @@ export default function App() {
   const handleMainDayCellWillUnmount = useCallback((arg) => {
     const td = arg.el;
     const frame = td.querySelector('.fc-daygrid-day-frame') || td;
+
     if (td._monthHoverEnter) {
       td.removeEventListener('mouseenter', td._monthHoverEnter);
       delete td._monthHoverEnter;
@@ -472,11 +401,14 @@ export default function App() {
       td.removeEventListener('mouseleave', td._monthHoverLeave);
       delete td._monthHoverLeave;
     }
+
+    // reset styles
     frame.style.cursor = '';
     td.style.outline = '';
     td.style.outlineOffset = '';
   }, []);
 
+  // Mini calendar click behavior
   const handleMiniDateClick = (arg) => {
     if (isMobile) {
       setMobileDayDate(arg.date);
@@ -496,6 +428,7 @@ export default function App() {
     }
   };
 
+  // Additional Info sections (static)
   const additionalInfoSections = [
     { id: 'policies', title: 'Arena Policies', content: <div><p>Helmets required for all skaters under 18. No outside food in bench area. Please arrive 15 minutes early for check-in.</p></div> },
     { id: 'cancellations', title: 'Cancellations & Refunds', content: <div><p>Cancellations must be received 48 hours prior to booking start time for a full refund. Inside 48 hours, fees are non-refundable.</p></div> },
@@ -740,7 +673,9 @@ export default function App() {
             eventContent={renderEventContent}
             eventMouseEnter={handleMouseEnter}
             eventMouseLeave={handleMouseLeave}
+            /* Month-day click -> day view */
             dateClick={handleMainDateClick}
+            /* Pointer + full-cell outline on month day cells (MAIN calendar) */
             dayCellDidMount={handleMainDayCellDidMount}
             dayCellWillUnmount={handleMainDayCellWillUnmount}
             eventDidMount={(arg) => {
