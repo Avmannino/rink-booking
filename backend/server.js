@@ -568,7 +568,17 @@ app.post('/api/checkout/confirm', bodyParser.json(), async (req, res) => {
       console.warn('[CONFIRM] Mail not configured; skipping confirmation emails.');
     }
 
-    return res.json({ ok: true });
+    // Return details so the success screen can render Add-to-Calendar
+    return res.json({
+      ok: true,
+      session_id,
+      start,
+      end,
+      name,
+      email,
+      amount_cents: amountTotal,
+      currency
+    });
   } catch (e) {
     console.error('[CONFIRM] Error:', e?.message || e);
     return res.status(500).json({ error: 'Failed to confirm session' });
