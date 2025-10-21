@@ -791,7 +791,7 @@ export default function App() {
             footerNote="The booking calendar reflects available ice times 90 days out. If you'd like to inquire about a booking past 90 days, please email info@wingsarena.com."
           />
 
-          <h1 className="title">Ice Reservation Availability</h1>
+          <h1 className="title">Wings Arena Ice Reservations</h1>
 
           <div className="centerNav">
             <button className="navBtn" onClick={goPrev} aria-label="Previous">‹</button>
