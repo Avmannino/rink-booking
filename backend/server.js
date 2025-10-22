@@ -211,30 +211,18 @@ function priceIntervalCents(startISO, endISO) {
 }
 
 /* ==========================================
-   Expand VEVENT into segments (>=40 minutes)
+   Return continuous time windows (>=45 minutes)
    ========================================== */
-function expandIntoSegments40(startDate, endDate) {
+function getContinuousWindows(startDate, endDate) {
   var s = new Date(startDate);
   var e = new Date(endDate);
-  var out = [];
   var totalMs = e - s;
-  if (totalMs < 40 * 60 * 1000) return out;
-
-  var cur = new Date(s);
-  var oneHourMs = 60 * 60 * 1000;
-
-  while (cur < e) {
-    var nxt = new Date(cur.getTime() + oneHourMs);
-    if (nxt <= e) {
-      out.push({ start: new Date(cur), end: new Date(nxt) });
-      cur = nxt;
-    } else {
-      var remMs = e - cur;
-      if (remMs >= 40 * 60 * 1000) out.push({ start: new Date(cur), end: new Date(e) });
-      break;
-    }
-  }
-  return out;
+  
+  // Minimum 45 minutes required
+  if (totalMs < 45 * 60 * 1000) return [];
+  
+  // Return the full continuous window
+  return [{ start: new Date(s), end: new Date(e) }];
 }
 
 /* ============
@@ -347,16 +335,16 @@ app.get('/api/slots', async function (_req, res) {
       if (!ev.start || !ev.end) continue;
       if (ev.end <= now) continue;
 
-      var segs = expandIntoSegments40(ev.start, ev.end);
-      for (var j = 0; j < segs.length; j++) {
-        var b = segs[j];
-        if (b.end <= now) continue;
+      var windows = getContinuousWindows(ev.start, ev.end);
+      for (var j = 0; j < windows.length; j++) {
+        var w = windows[j];
+        if (w.end <= now) continue;
         expanded.push({
-          id: slotId(b.start, b.end),
+          id: slotId(w.start, w.end),
           title: 'Available Ice',
-          start: b.start,
-          end: b.end,
-          price_cents: priceIntervalCents(b.start, b.end)
+          start: w.start,
+          end: w.end,
+          price_cents: priceIntervalCents(w.start, w.end)
         });
       }
     }
@@ -390,6 +378,15 @@ app.get('/api/slots', async function (_req, res) {
   }
 });
 
+// ===== Validation schema for custom slot creation
+const CreateCustomSlotSchema = z.object({
+  start: z.string().datetime(),
+  end: z.string().datetime(),
+  name: z.string().min(1).max(120),
+  email: z.string().email(),
+  purpose: z.string().max(200).optional()
+});
+
 // ===== Validation schema for checkout
 const CreateCheckoutSchema = z.object({
   slotId: z.string().min(6),
@@ -398,6 +395,106 @@ const CreateCheckoutSchema = z.object({
   name: z.string().min(1).max(120),
   email: z.string().email(),
   purpose: z.string().max(200).optional()
+});
+
+// POST /api/validate-custom-slot - Validate a custom time slot request
+app.post('/api/validate-custom-slot', async function (req, res) {
+  try {
+    const parse = CreateCustomSlotSchema.safeParse(req.body || {});
+    if (!parse.success) {
+      return res.status(400).json({ error: 'Invalid payload', details: parse.error.flatten() });
+    }
+
+    const { start, end, name, email, purpose } = parse.data;
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+
+    // Validate time constraints
+    const durationMs = endDate - startDate;
+    const minDurationMs = 45 * 60 * 1000; // 45 minutes
+    const maxDurationMs = 16.5 * 60 * 60 * 1000; // 16.5 hours (6am to 10:30pm)
+
+    if (durationMs < minDurationMs) {
+      return res.status(400).json({ error: 'Minimum booking duration is 45 minutes' });
+    }
+
+    if (durationMs > maxDurationMs) {
+      return res.status(400).json({ error: 'Maximum booking duration is 16.5 hours' });
+    }
+
+    // Check if times are within business hours (6am - 10:30pm)
+    const startHour = startDate.getHours();
+    const startMinute = startDate.getMinutes();
+    const endHour = endDate.getHours();
+    const endMinute = endDate.getMinutes();
+
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+
+    if (startMinutes < 6 * 60 || startMinutes >= 22.5 * 60) {
+      return res.status(400).json({ error: 'Start time must be between 6:00 AM and 10:30 PM' });
+    }
+
+    if (endMinutes < 6 * 60 || endMinutes > 22.5 * 60) {
+      return res.status(400).json({ error: 'End time must be between 6:00 AM and 10:30 PM' });
+    }
+
+    // Check if the requested time slot overlaps with any existing bookings
+    if (supabase) {
+      const overlapResp = await supabase
+        .from('bookings')
+        .select('slot_id, start_ts, end_ts')
+        .or(`and(start_ts.lt.${endDate.toISOString()},end_ts.gt.${startDate.toISOString()})`);
+
+      if (overlapResp.error) {
+        console.error('[VALIDATE] Overlap check error:', overlapResp.error.message);
+        return res.status(500).json({ error: 'Failed to check availability' });
+      }
+
+      if (overlapResp.data && overlapResp.data.length > 0) {
+        return res.status(409).json({ error: 'Selected time slot conflicts with existing booking' });
+      }
+
+      // Check for active holds
+      const holdResp = await supabase
+        .from('slot_holds')
+        .select('slot_id, start_ts, end_ts')
+        .gt('expires_at', new Date().toISOString())
+        .or(`and(start_ts.lt.${endDate.toISOString()},end_ts.gt.${startDate.toISOString()})`);
+
+      if (holdResp.error) {
+        console.error('[VALIDATE] Hold check error:', holdResp.error.message);
+        return res.status(500).json({ error: 'Failed to check holds' });
+      }
+
+      if (holdResp.data && holdResp.data.length > 0) {
+        return res.status(409).json({ error: 'Selected time slot is currently on hold' });
+      }
+    }
+
+    // Calculate price
+    const priceCents = priceIntervalCents(startDate, endDate);
+    if (priceCents <= 0) {
+      return res.status(400).json({ error: 'Selected time slot is not billable' });
+    }
+
+    // Generate slot ID
+    const slotId = crypto.createHash('sha256')
+      .update(startDate.toISOString() + '__' + endDate.toISOString())
+      .digest('hex')
+      .slice(0, 24);
+
+    res.json({
+      valid: true,
+      slotId,
+      price_cents: priceCents,
+      duration_minutes: Math.round(durationMs / (60 * 1000))
+    });
+
+  } catch (err) {
+    console.error('[VALIDATE] Error:', err);
+    res.status(500).json({ error: 'Failed to validate slot' });
+  }
 });
 
 // Create checkout — charge exact per-slot price (tiered, prorated)

@@ -5,6 +5,7 @@ import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import BookingModal from './BookingModal';
+import TimeSelectionModal from './TimeSelectionModal';
 import Carousel from "./Carousel";
 import AdditionalInfo from './AdditionalInfo';
 
@@ -286,6 +287,7 @@ export default function App() {
 
   const [events, setEvents] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [timeSelectionSlot, setTimeSelectionSlot] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const [calTitle, setCalTitle] = useState('');
@@ -403,7 +405,16 @@ export default function App() {
 
   const handleEventClick = (info) => {
     const slot = events.find((e) => e.id === info.event.id);
-    if (slot) setSelected(slot);
+    if (slot) setTimeSelectionSlot(slot);
+  };
+
+  const handleTimeSelectionProceed = (validatedSlot) => {
+    setSelected(validatedSlot);
+    setTimeSelectionSlot(null);
+  };
+
+  const handleTimeSelectionClose = () => {
+    setTimeSelectionSlot(null);
   };
 
   const renderEventContent = (arg) => {
@@ -852,6 +863,15 @@ export default function App() {
             height="auto"
           />
         </main>
+      )}
+
+      {/* Time selection modal */}
+      {timeSelectionSlot && (
+        <TimeSelectionModal
+          slot={timeSelectionSlot}
+          onClose={handleTimeSelectionClose}
+          onProceed={handleTimeSelectionProceed}
+        />
       )}
 
       {/* Booking modal (both desktop and mobile) */}
