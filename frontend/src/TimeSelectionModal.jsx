@@ -109,8 +109,11 @@ export default function TimeSelectionModal({ slot, onClose, onProceed }) {
     const slotStartMinutes = slotStart.getHours() * 60 + slotStart.getMinutes();
     const slotEndMinutes = slotEnd.getHours() * 60 + slotEnd.getMinutes();
     
+    // For start time: latest option should be 45 minutes before slot end
+    const maxStartMinutes = slotEndMinutes - 45;
+    
     // Generate 15-minute intervals within the slot window
-    for (let minutes = slotStartMinutes; minutes <= slotEndMinutes; minutes += 15) {
+    for (let minutes = slotStartMinutes; minutes <= maxStartMinutes; minutes += 15) {
       const hours = Math.floor(minutes / 60);
       const mins = minutes % 60;
       
@@ -254,9 +257,9 @@ export default function TimeSelectionModal({ slot, onClose, onProceed }) {
             type="button" 
             onClick={validateTimeSlot}
             disabled={isValidating}
-            style={styles.validateBtn}
+            style={styles.confirmBtn}
           >
-            {isValidating ? 'Validating...' : 'Validate Times'}
+            {isValidating ? 'Confirming...' : 'Confirm Times'}
           </button>
 
           {validatedSlot && (
@@ -363,14 +366,14 @@ const styles = {
     background: '#e5e7eb', 
     color: '#111827' 
   },
-  validateBtn: { 
+  confirmBtn: { 
     appearance: 'none', 
     border: 'none', 
     borderRadius: 9999, 
     padding: '10px 16px', 
     fontWeight: 600, 
     cursor: 'pointer', 
-    background: '#f59e0b', 
+    background: '#10b981', 
     color: '#fff' 
   },
   primaryBtn: { 
