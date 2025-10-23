@@ -324,6 +324,12 @@ app.get('/api/slots', async function (_req, res) {
     }
 
     var now = new Date();
+    var maxDate = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000); // 60 days from now
+    console.log('[SLOTS] Date range:', {
+      now: now.toISOString(),
+      maxDate: maxDate.toISOString(),
+      maxDateLocal: maxDate.toLocaleDateString()
+    });
     var vevents = Object.values(events).filter(function (ev) {
       return ev && ev.type === 'VEVENT';
     });
@@ -334,6 +340,11 @@ app.get('/api/slots', async function (_req, res) {
       var ev = vevents[i];
       if (!ev.start || !ev.end) continue;
       if (ev.end <= now) continue;
+      if (ev.start > maxDate) continue; // Skip events that start beyond 60 days
+      if (ev.end > maxDate) {
+        // If event extends beyond 60 days, truncate it to 60 days
+        ev.end = new Date(maxDate);
+      }
 
       var windows = getContinuousWindows(ev.start, ev.end);
       for (var j = 0; j < windows.length; j++) {

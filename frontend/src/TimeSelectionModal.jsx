@@ -9,6 +9,7 @@ export default function TimeSelectionModal({ slot, onClose, onProceed }) {
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState('');
   const [validatedSlot, setValidatedSlot] = useState(null);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   const slotStart = new Date(slot.start);
   const slotEnd = new Date(slot.end);
@@ -30,11 +31,14 @@ export default function TimeSelectionModal({ slot, onClose, onProceed }) {
     // Set end time to 45 minutes after start (minimum booking)
     const defaultEnd = new Date(slotStart.getTime() + 45 * 60 * 1000);
     setEndTime(formatTime12Hour(defaultEnd));
+    
+    setIsInitialized(true);
   }, [slot]);
 
-  const validateTimeSlot = async () => {
-    if (!startTime || !endTime) {
+  const validateTimeSlot = async (startTimeValue = startTime, endTimeValue = endTime) => {
+    if (!startTimeValue || !endTimeValue) {
       setValidationError('Please select both start and end times');
+      setValidatedSlot(null);
       return;
     }
 
@@ -52,8 +56,8 @@ export default function TimeSelectionModal({ slot, onClose, onProceed }) {
         return { hours: hour24, minutes };
       };
 
-      const startTimeParsed = parseTime12Hour(startTime);
-      const endTimeParsed = parseTime12Hour(endTime);
+      const startTimeParsed = parseTime12Hour(startTimeValue);
+      const endTimeParsed = parseTime12Hour(endTimeValue);
       
       const customStart = new Date(slotStart);
       customStart.setHours(startTimeParsed.hours, startTimeParsed.minutes, 0, 0);
@@ -84,15 +88,36 @@ export default function TimeSelectionModal({ slot, onClose, onProceed }) {
     } catch (error) {
       console.error('Validation error:', error);
       setValidationError(error.response?.data?.error || 'Failed to validate time slot');
+      setValidatedSlot(null);
     } finally {
       setIsValidating(false);
     }
   };
 
-  const handleProceed = () => {
-    if (validatedSlot) {
-      onProceed(validatedSlot);
+  // Auto-validate when times change (but not on initial load)
+  useEffect(() => {
+    if (isInitialized && startTime && endTime) {
+      const timeoutId = setTimeout(() => {
+        validateTimeSlot();
+      }, 300); // Debounce validation
+      
+      return () => clearTimeout(timeoutId);
     }
+  }, [startTime, endTime, isInitialized]);
+
+  const handleProceed = async () => {
+    if (!startTime || !endTime) {
+      setValidationError('Please select both start and end times');
+      return;
+    }
+
+    // If we don't have a validated slot, validate now
+    if (!validatedSlot) {
+      await validateTimeSlot();
+      return; // The validation will trigger a re-render, and user can try again
+    }
+
+    onProceed(validatedSlot);
   };
 
   const formatUSD = (cents) => 
@@ -101,6 +126,19 @@ export default function TimeSelectionModal({ slot, onClose, onProceed }) {
       currency: 'USD', 
       minimumFractionDigits: 2 
     });
+
+  const formatDuration = (minutes) => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    
+    if (hours === 0) {
+      return `${mins} minutes`;
+    } else if (mins === 0) {
+      return `${hours} hour${hours > 1 ? 's' : ''}`;
+    } else {
+      return `${hours} hour${hours > 1 ? 's' : ''} ${mins} minutes`;
+    }
+  };
 
   const generateTimeOptions = (isEndTime = false) => {
     const options = [];
@@ -233,14 +271,22 @@ export default function TimeSelectionModal({ slot, onClose, onProceed }) {
           </div>
         )}
 
-        {validatedSlot && (
+        {(validatedSlot || (startTime && endTime)) && (
           <div style={styles.validationSuccess}>
-            <div style={styles.priceInfo}>
-              <strong>Duration:</strong> {validatedSlot.duration_minutes} minutes
-            </div>
-            <div style={styles.priceInfo}>
-              <strong>Price:</strong> {formatUSD(validatedSlot.price_cents)}
-            </div>
+            {validatedSlot ? (
+              <>
+                <div style={styles.priceInfo}>
+                  <strong>Duration:</strong> {formatDuration(validatedSlot.duration_minutes)}
+                </div>
+                <div style={styles.priceInfo}>
+                  <strong>Price:</strong> {formatUSD(validatedSlot.price_cents)}
+                </div>
+              </>
+            ) : (
+              <div style={styles.priceInfo}>
+                <strong>Calculating duration and price...</strong>
+              </div>
+            )}
           </div>
         )}
 
@@ -255,22 +301,12 @@ export default function TimeSelectionModal({ slot, onClose, onProceed }) {
           
           <button 
             type="button" 
-            onClick={validateTimeSlot}
-            disabled={isValidating}
-            style={styles.confirmBtn}
+            onClick={handleProceed}
+            disabled={isValidating || !startTime || !endTime}
+            style={styles.primaryBtn}
           >
-            {isValidating ? 'Confirming...' : 'Confirm Times'}
+            {isValidating ? 'Validating...' : 'Proceed to Booking'}
           </button>
-
-          {validatedSlot && (
-            <button 
-              type="button" 
-              onClick={handleProceed}
-              style={styles.primaryBtn}
-            >
-              Proceed to Booking
-            </button>
-          )}
         </div>
       </div>
     </div>

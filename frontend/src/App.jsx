@@ -17,9 +17,13 @@ const LOGO_SRC = '/logo.png';
 // ---- format helpers
 function fmtDuration(ms) {
   const t = Math.round(ms / 60000), h = Math.floor(t / 60), m = t % 60;
-  if (h && m) return `${h}h ${m}m`;
-  if (h) return `${h}h`;
-  return `${t} min`;
+  if (h === 0) {
+    return `${m} minutes`;
+  } else if (m === 0) {
+    return `${h} hour${h > 1 ? 's' : ''}`;
+  } else {
+    return `${h} hour${h > 1 ? 's' : ''} ${m} minutes`;
+  }
 }
 function fmtStartTime(d) {
   const s = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -289,6 +293,7 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [timeSelectionSlot, setTimeSelectionSlot] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [showDateLimitModal, setShowDateLimitModal] = useState(false);
 
   const [calTitle, setCalTitle] = useState('');
   const [currentView, setCurrentView] = useState('timeGridWeek');
@@ -298,9 +303,57 @@ export default function App() {
     new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date())
   );
   const [selectedMiniISO, setSelectedMiniISO] = useState(toYMD(new Date()));
+  const [miniCurrentDate, setMiniCurrentDate] = useState(new Date());
 
   const mainCalRef = useRef(null);
   const miniCalRef = useRef(null);
+
+  // Helper function to check if a date is beyond 60 days
+  const isBeyond60Days = (date) => {
+    const now = new Date();
+    const maxDate = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+    return date > maxDate;
+  };
+
+  // Helper function to check if a date is in the past
+  const isInPast = (date) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const checkDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    return checkDate < today;
+  };
+
+  // Helper function to check if prev navigation is allowed
+  const canNavigatePrev = (currentDate, viewType) => {
+    const now = new Date();
+    const prevDate = new Date(currentDate);
+    
+    if (viewType === 'dayGridMonth') {
+      prevDate.setMonth(prevDate.getMonth() - 1);
+      // For month view, only prevent going before current month
+      const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const prevMonth = new Date(prevDate.getFullYear(), prevDate.getMonth(), 1);
+      return prevMonth >= currentMonth;
+    } else if (viewType === 'timeGridWeek') {
+      prevDate.setDate(prevDate.getDate() - 7);
+      // For week view, only prevent going before current week
+      const currentWeekStart = new Date(now);
+      currentWeekStart.setDate(now.getDate() - now.getDay()); // Start of current week
+      currentWeekStart.setHours(0, 0, 0, 0);
+      const prevWeekStart = new Date(prevDate);
+      prevWeekStart.setDate(prevDate.getDate() - prevDate.getDay());
+      prevWeekStart.setHours(0, 0, 0, 0);
+      return prevWeekStart >= currentWeekStart;
+    } else if (viewType === 'timeGridDay') {
+      prevDate.setDate(prevDate.getDate() - 1);
+      // For day view, prevent going before today
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const prevDay = new Date(prevDate.getFullYear(), prevDate.getMonth(), prevDate.getDate());
+      return prevDay >= today;
+    }
+    
+    return true;
+  };
 
   // Mobile state
   const [isMobile, setIsMobile] = useState(
@@ -507,6 +560,13 @@ export default function App() {
   const goPrev = () => {
     const api = getApi();
     if (api) {
+      const currentDate = api.getDate();
+      
+      // Check if prev navigation is allowed
+      if (!canNavigatePrev(currentDate, currentView)) {
+        return; // Don't navigate to past dates
+      }
+      
       api.prev();
       const d = api.getDate();
       setCurrentDate(d);
@@ -516,6 +576,24 @@ export default function App() {
   const goNext = () => {
     const api = getApi();
     if (api) {
+      const currentDate = api.getDate();
+      const nextDate = new Date(currentDate);
+      
+      // Calculate what the next date would be based on current view
+      if (currentView === 'dayGridMonth') {
+        nextDate.setMonth(nextDate.getMonth() + 1);
+      } else if (currentView === 'timeGridWeek') {
+        nextDate.setDate(nextDate.getDate() + 7);
+      } else if (currentView === 'timeGridDay') {
+        nextDate.setDate(nextDate.getDate() + 1);
+      }
+      
+      // Check if the next date would be beyond 60 days
+      if (isBeyond60Days(nextDate)) {
+        setShowDateLimitModal(true);
+        return;
+      }
+      
       api.next();
       const d = api.getDate();
       setCurrentDate(d);
@@ -616,7 +694,7 @@ export default function App() {
           <AdditionalInfo
             sections={additionalInfoSections}
             triggerText="Additional Info"
-            footerNote="The booking calendar reflects available ice times 90 days out. If you'd like to inquire about a booking past 90 days, please email info@wingsarena.com."
+            footerNote="The booking calendar reflects available ice times 60 days out. If you'd like to inquire about a booking past 60 days, please email info@wingsarena.com."
           />
         )}
 
@@ -630,7 +708,23 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     const miniApi = miniCalRef.current?.getApi();
-                    if (miniApi) { miniApi.prev(); setMiniTitle(miniApi.view.title); }
+                    if (miniApi) {
+                      const miniDate = miniApi.getDate();
+                      
+                      if (!canNavigatePrev(miniDate, 'dayGridMonth')) {
+                        return; // Don't navigate to past dates
+                      }
+                      
+                      miniApi.prev();
+                      const newDate = miniApi.getDate();
+                      setMiniTitle(miniApi.view.title);
+                      setMiniCurrentDate(newDate);
+                    }
+                  }}
+                  disabled={!canNavigatePrev(miniCurrentDate, 'dayGridMonth')}
+                  style={{ 
+                    opacity: canNavigatePrev(miniCurrentDate, 'dayGridMonth') ? 1 : 0.3,
+                    cursor: canNavigatePrev(miniCurrentDate, 'dayGridMonth') ? 'pointer' : 'not-allowed'
                   }}
                 >
                   ‹
@@ -641,7 +735,21 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     const miniApi = miniCalRef.current?.getApi();
-                    if (miniApi) { miniApi.next(); setMiniTitle(miniApi.view.title); }
+                    if (miniApi) {
+                      const miniDate = miniApi.getDate();
+                      const nextDate = new Date(miniDate);
+                      nextDate.setMonth(nextDate.getMonth() + 1);
+                      
+                      if (isBeyond60Days(nextDate)) {
+                        setShowDateLimitModal(true);
+                        return;
+                      }
+                      
+                      miniApi.next();
+                      const newDate = miniApi.getDate();
+                      setMiniTitle(miniApi.view.title);
+                      setMiniCurrentDate(newDate);
+                    }
                   }}
                 >
                   ›
@@ -664,12 +772,13 @@ export default function App() {
                 dayCellDidMount={miniDayCellDidMount}
                 dateClick={handleMiniDateClick}
                 initialDate={currentDate}
-                datesSet={(info) =>
+                datesSet={(info) => {
                   setMiniTitle(
                     new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
                       .format(info.view.currentStart)
-                  )
-                }
+                  );
+                  setMiniCurrentDate(info.view.currentStart);
+                }}
               />
             </aside>
 
@@ -691,7 +800,23 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     const miniApi = miniCalRef.current?.getApi();
-                    if (miniApi) { miniApi.prev(); setMiniTitle(miniApi.view.title); }
+                    if (miniApi) {
+                      const miniDate = miniApi.getDate();
+                      
+                      if (!canNavigatePrev(miniDate, 'dayGridMonth')) {
+                        return; // Don't navigate to past dates
+                      }
+                      
+                      miniApi.prev();
+                      const newDate = miniApi.getDate();
+                      setMiniTitle(miniApi.view.title);
+                      setMiniCurrentDate(newDate);
+                    }
+                  }}
+                  disabled={!canNavigatePrev(miniCurrentDate, 'dayGridMonth')}
+                  style={{ 
+                    opacity: canNavigatePrev(miniCurrentDate, 'dayGridMonth') ? 1 : 0.3,
+                    cursor: canNavigatePrev(miniCurrentDate, 'dayGridMonth') ? 'pointer' : 'not-allowed'
                   }}
                 >
                   ‹
@@ -702,7 +827,21 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     const miniApi = miniCalRef.current?.getApi();
-                    if (miniApi) { miniApi.next(); setMiniTitle(miniApi.view.title); }
+                    if (miniApi) {
+                      const miniDate = miniApi.getDate();
+                      const nextDate = new Date(miniDate);
+                      nextDate.setMonth(nextDate.getMonth() + 1);
+                      
+                      if (isBeyond60Days(nextDate)) {
+                        setShowDateLimitModal(true);
+                        return;
+                      }
+                      
+                      miniApi.next();
+                      const newDate = miniApi.getDate();
+                      setMiniTitle(miniApi.view.title);
+                      setMiniCurrentDate(newDate);
+                    }
                   }}
                 >
                   ›
@@ -725,12 +864,13 @@ export default function App() {
                 dayCellDidMount={miniDayCellDidMount}
                 dateClick={handleMiniDateClick}
                 initialDate={currentDate}
-                datesSet={(info) =>
+                datesSet={(info) => {
                   setMiniTitle(
                     new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
                       .format(info.view.currentStart)
-                  )
-                }
+                  );
+                  setMiniCurrentDate(info.view.currentStart);
+                }}
               />
             </aside>
 
@@ -799,13 +939,24 @@ export default function App() {
           <AdditionalInfo
             sections={additionalInfoSections}
             triggerText="Additional Info"
-            footerNote="The booking calendar reflects available ice times 90 days out. If you'd like to inquire about a booking past 90 days, please email info@wingsarena.com."
+            footerNote="The booking calendar reflects available ice times 60 days out. If you'd like to inquire about a booking past 60 days, please email info@wingsarena.com."
           />
 
           <h1 className="title">Wings Arena Ice Reservations</h1>
 
           <div className="centerNav">
-            <button className="navBtn" onClick={goPrev} aria-label="Previous">‹</button>
+            <button 
+              className="navBtn" 
+              onClick={goPrev} 
+              aria-label="Previous"
+              disabled={!canNavigatePrev(currentDate, currentView)}
+              style={{ 
+                opacity: canNavigatePrev(currentDate, currentView) ? 1 : 0.3,
+                cursor: canNavigatePrev(currentDate, currentView) ? 'pointer' : 'not-allowed'
+              }}
+            >
+              ‹
+            </button>
             <div className="currentMonth">
               {calTitle || new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(currentDate)}
             </div>
@@ -889,6 +1040,68 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Date limit modal */}
+      {showDateLimitModal && (
+        <div style={dateLimitModalStyles.backdrop}>
+          <div style={dateLimitModalStyles.modal}>
+            <h2 style={{ marginTop: 0, color: '#E6E8F0' }}>
+              Booking Calendar Limit
+            </h2>
+            <p style={{ color: '#CBD5E1', marginBottom: 20 }}>
+              The booking calendar reflects available ice times over the next 60 days. 
+              If you'd like to inquire about a booking past 60 days, please email info@wingsarena.com.
+            </p>
+            <div style={dateLimitModalStyles.buttonGroup}>
+              <button 
+                type="button" 
+                onClick={() => setShowDateLimitModal(false)} 
+                style={dateLimitModalStyles.primaryBtn}
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+const dateLimitModalStyles = {
+  backdrop: { 
+    position: 'fixed', 
+    inset: 0, 
+    background: 'rgba(0,0,0,0.5)', 
+    display: 'grid', 
+    placeItems: 'center', 
+    padding: 16, 
+    zIndex: 9999 
+  },
+  modal: { 
+    width: '100%', 
+    maxWidth: 480, 
+    background: '#0f172a', 
+    border: '1px solid #1f2a44', 
+    borderRadius: 12, 
+    padding: 24, 
+    boxShadow: '0 16px 32px rgba(0,0,0,0.45)' 
+  },
+  buttonGroup: { 
+    display: 'flex', 
+    gap: 8, 
+    justifyContent: 'center', 
+    marginTop: 8
+  },
+  primaryBtn: { 
+    appearance: 'none', 
+    border: 'none', 
+    borderRadius: 9999, 
+    padding: '12px 24px', 
+    fontWeight: 600, 
+    cursor: 'pointer', 
+    background: '#4f46e5', 
+    color: '#fff',
+    fontSize: 16
+  }
+};

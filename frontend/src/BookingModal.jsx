@@ -43,6 +43,19 @@ export default function BookingModal({ slot, onClose, onCheckout }) {
   const priceCents = typeof slot.price_cents === 'number' ? slot.price_cents : priceIntervalCents(start, end);
   const fmtUSD = (cents) => (cents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
   const normalizePhone = (value) => { let v = value.replace(/[^\d+]/g, ''); if (/^\d{10}$/.test(v)) return `(${v.slice(0, 3)}) ${v.slice(3, 6)}-${v.slice(6)}`; return value; };
+  
+  const formatDuration = (minutes) => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    
+    if (hours === 0) {
+      return `${mins} minutes`;
+    } else if (mins === 0) {
+      return `${hours} hour${hours > 1 ? 's' : ''}`;
+    } else {
+      return `${hours} hour${hours > 1 ? 's' : ''} ${mins} minutes`;
+    }
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
